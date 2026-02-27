@@ -1,4 +1,4 @@
-# Assessors Studio
+# CycloneDX Assessors Studio
 
 > ⚠️ **Status: Active Development**\
 > Assessors Studio is currently under active development and is not yet ready for production use.
