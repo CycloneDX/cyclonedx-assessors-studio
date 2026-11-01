@@ -1,1 +1,0 @@
-{"root":["./src/index.ts","./src/config/index.ts","./src/db/connection.ts","./src/db/migrate.ts","./src/db/types.ts","./src/middleware/auth.ts","./src/middleware/security.ts","./src/routes/assessments.ts","./src/routes/auth.ts","./src/routes/evidence.ts","./src/routes/projects.ts","./src/routes/standards.ts","./src/utils/crypto.ts","./src/utils/logger.ts"],"version":"6.0.2"}

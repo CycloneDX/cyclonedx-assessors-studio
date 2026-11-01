@@ -243,4 +243,16 @@ describe('AssessmentDetailView', () => {
 
     expect(wrapper.find('.breadcrumb').exists()).toBe(true)
   })
+
+  // Security review W9: external reference links render only http(s).
+  it.each([
+    ['javascript:alert(1)', '#'],
+    ['JaVaScRiPt:alert(1)', '#'],
+    ['data:text/html,<script>alert(1)</script>', '#'],
+    ['not a url', '#'],
+    ['https://example.com/ref', 'https://example.com/ref'],
+  ])('renders %s as %s', (input, expected) => {
+    const wrapper = mount(AssessmentDetailView, { global: { stubs } })
+    expect((wrapper.vm as any).safeExternalUrl(input)).toBe(expected)
+  })
 })

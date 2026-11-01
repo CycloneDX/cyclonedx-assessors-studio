@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
+import crypto from 'node:crypto';
+import { sql } from 'kysely';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { getDatabase } from '../db/connection.js';
@@ -16,6 +18,18 @@ import { fetchUserById, fetchUserByUsername, formatUserProfile } from '../utils/
 import { checkResourceExists } from '../utils/resource-checks.js';
 import { logAudit } from '../utils/audit.js';
 import { buildSessionCookieOptions, buildClearCookieOptions } from '../utils/cookies.js';
+import { deliverPasswordReset } from '../services/password-reset-mail.js';
+
+/**
+ * argon2 hash of random bytes, computed once. Verified against on the
+ * unknown-user and locked-account paths so they take as long as a real
+ * password check.
+ */
+let dummyPasswordHash: Promise<string> | null = null;
+function getDummyPasswordHash(): Promise<string> {
+  dummyPasswordHash ??= hashPassword(crypto.randomBytes(32).toString('base64url'));
+  return dummyPasswordHash;
+}
 
 const router = Router();
 const config = getConfig();
@@ -75,6 +89,9 @@ router.post('/login', asyncHandler(async (req: AuthRequest, res: Response): Prom
     const user = await fetchUserByUsername(db, username);
 
     if (!user) {
+      // Spend the same argon2 time as a real check so response timing
+      // does not reveal which usernames exist (security review A6).
+      await verifyPassword(await getDummyPasswordHash(), password);
       authLoginTotal.inc({ method: 'local', result: 'failure' });
       res.status(401).json({ error: 'Invalid credentials' });
       return;
@@ -88,6 +105,7 @@ router.post('/login', asyncHandler(async (req: AuthRequest, res: Response): Prom
     // observing a different status code or message.
     const now = new Date();
     if (user.locked_until && new Date(user.locked_until) > now) {
+      await verifyPassword(await getDummyPasswordHash(), password);
       authLoginTotal.inc({ method: 'local', result: 'failure' });
       logger.warn('Login attempt against locked account', {
         userId: user.id,
@@ -103,31 +121,34 @@ router.post('/login', asyncHandler(async (req: AuthRequest, res: Response): Prom
     if (!passwordValid) {
       authLoginTotal.inc({ method: 'local', result: 'failure' });
 
-      const previousFailures = user.failed_login_count ?? 0;
-      const nextCount = previousFailures + 1;
+      // Increment in the database, not read-modify-write, so concurrent
+      // guesses each count. A lock that has already expired starts a fresh
+      // count; otherwise one wrong password per lockout window kept a known
+      // account locked forever (security review A7).
+      const counted = await db
+        .updateTable('app_user')
+        .set({
+          failed_login_count: sql<number>`CASE WHEN locked_until IS NOT NULL AND locked_until <= ${now} THEN 1 ELSE COALESCE(failed_login_count, 0) + 1 END`,
+          locked_until: sql<Date | null>`CASE WHEN locked_until IS NOT NULL AND locked_until <= ${now} THEN NULL ELSE locked_until END`,
+          last_failed_login_at: now,
+        })
+        .where('id', '=', user.id)
+        .returning('failed_login_count')
+        .executeTakeFirst();
+      const nextCount = Number(counted?.failed_login_count ?? 1);
       const threshold = config.LOGIN_MAX_FAILED_ATTEMPTS;
-      const lockoutEnabled = threshold > 0;
-      const shouldLock = lockoutEnabled && nextCount >= threshold;
-
-      const updates: {
-        failed_login_count: number;
-        last_failed_login_at: Date;
-        locked_until?: Date;
-      } = {
-        failed_login_count: nextCount,
-        last_failed_login_at: now,
-      };
+      const shouldLock = threshold > 0 && nextCount >= threshold;
+      const updates: { locked_until?: Date } = {};
       if (shouldLock) {
         updates.locked_until = new Date(
           now.getTime() + config.LOGIN_LOCKOUT_DURATION_MINUTES * 60 * 1000,
         );
+        await db
+          .updateTable('app_user')
+          .set({ locked_until: updates.locked_until })
+          .where('id', '=', user.id)
+          .execute();
       }
-
-      await db
-        .updateTable('app_user')
-        .set(updates)
-        .where('id', '=', user.id)
-        .execute();
 
       if (shouldLock) {
         logger.warn('Account locked after repeated failed logins', {
@@ -201,6 +222,7 @@ router.post('/login', asyncHandler(async (req: AuthRequest, res: Response): Prom
       { sessionId },
       config.JWT_SECRET,
       {
+        algorithm: 'HS256',
         expiresIn: config.JWT_EXPIRY,
       } as jwt.SignOptions
     );
@@ -328,7 +350,28 @@ router.post('/register', asyncHandler(async (req: AuthRequest, res: Response): P
     const userId = uuidv4();
     const role = invite?.intended_role ?? 'assessee';
 
+    let inviteLost = false;
     await db.transaction().execute(async (trx) => {
+      // Claim the invite before creating the account, re-checking every
+      // validity condition in the same statement. A concurrent request
+      // that already consumed it gets no row back and this one rolls
+      // back: one invite, one account (security review A5).
+      if (invite) {
+        const claimed = await trx
+          .updateTable('user_invite')
+          .set({ consumed_at: new Date() })
+          .where('id', '=', invite.id)
+          .where('consumed_at', 'is', null)
+          .where('revoked_at', 'is', null)
+          .where('expires_at', '>', new Date())
+          .returning('id')
+          .executeTakeFirst();
+        if (!claimed) {
+          inviteLost = true;
+          return;
+        }
+      }
+
       await trx
         .insertInto('app_user')
         .values(toSnakeCase({
@@ -342,15 +385,19 @@ router.post('/register', asyncHandler(async (req: AuthRequest, res: Response): P
         }))
         .execute();
 
+      // consumed_by references app_user, so it can only be set now.
       if (invite) {
         await trx
           .updateTable('user_invite')
-          .set({ consumed_at: new Date(), consumed_by: userId })
+          .set({ consumed_by: userId })
           .where('id', '=', invite.id)
-          .where('consumed_at', 'is', null)
           .execute();
       }
     });
+    if (inviteLost) {
+      res.status(400).json({ error: 'Invitation is invalid or has expired' });
+      return;
+    }
 
     logger.info('User registered', {
       userId,
@@ -383,7 +430,7 @@ router.post(
     const cookieToken = req.cookies?.token;
     if (cookieToken) {
       try {
-        const payload = jwt.verify(cookieToken, config.JWT_SECRET) as { sessionId: string };
+        const payload = jwt.verify(cookieToken, config.JWT_SECRET, { algorithms: ['HS256'] }) as { sessionId: string };
         await getDatabase()
           .deleteFrom('session')
           .where('id', '=', payload.sessionId)
@@ -454,8 +501,10 @@ router.put(
 
       const passwordValid = await verifyPassword(user.password_hash, data.currentPassword);
 
+      // 400, not 401: the session is valid; only a field is wrong. A 401
+      // here reads as "session expired" and logs the user out client-side.
       if (!passwordValid) {
-        res.status(401).json({ error: 'Current password is incorrect' });
+        res.status(400).json({ error: 'Current password is incorrect' });
         return;
       }
 
@@ -491,9 +540,15 @@ router.put(
         .execute();
 
       // Invalidate all existing sessions to prevent stolen session reuse.
-      // This is a security requirement per OWASP ASVS 2.3.1.
+      // This is a security requirement per OWASP ASVS 2.3.1. API keys go
+      // too: a key minted from a stolen cookie must not outlive the
+      // password change (security review A3).
       await db
         .deleteFrom('session')
+        .where('user_id', '=', req.user.id)
+        .execute();
+      await db
+        .deleteFrom('api_key')
         .where('user_id', '=', req.user.id)
         .execute();
 
@@ -585,9 +640,14 @@ router.post(
 
       const db = getDatabase();
 
-      // Delete all sessions for the user
+      // Delete all sessions and API keys for the user: "everywhere"
+      // includes automation credentials (security review A3).
       await db
         .deleteFrom('session')
+        .where('user_id', '=', req.user.id)
+        .execute();
+      await db
+        .deleteFrom('api_key')
         .where('user_id', '=', req.user.id)
         .execute();
 
@@ -806,7 +866,9 @@ router.post('/forgot-password', asyncHandler(async (req: AuthRequest, res: Respo
     .selectFrom('password_reset_token')
     .where('user_id', '=', user.id)
     .where('created_at', '>=', oneHourAgo)
-    .where('consumed_at', 'is', null)
+    // Count every token issued in the window. Superseding marks older
+    // tokens consumed, so counting only unconsumed ones meant the cap
+    // could never trigger (security review A8).
     .select(db.fn.count<number>('id').as('count'))
     .executeTakeFirstOrThrow();
   const outstandingCount = Number(outstandingCountRow.count);
@@ -857,20 +919,13 @@ router.post('/forgot-password', asyncHandler(async (req: AuthRequest, res: Respo
     changes: { event: 'password_reset_requested', requestIp },
   });
 
-  // TODO(email-delivery): once an email channel template exists for
-  // "password_reset", emit the event here so events/channels/email.ts
-  // delivers the link. In the meantime the token surfaces via the
-  // logger so an operator can hand it off manually. The reset URL is
-  // composed client-side from the token; the server never embeds the
-  // host.
-  logger.info('Password reset token issued', {
-    userId: user.id,
-    expiresAt: expiresAt.toISOString(),
-    requestId: req.requestId,
-    // Token plaintext is included at info level intentionally for
-    // the bootstrap window — once the email template is wired this
-    // log line should be removed.
-    resetToken: tokenPlain,
+  // Delivery runs after the response so its timing (SMTP round trips)
+  // cannot tell a caller whether the account exists.
+  void deliverPasswordReset(user, tokenPlain, expiresAt).catch((error) => {
+    logger.error('Password reset email failed', {
+      userId: user.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
 
   await respondGeneric();
@@ -942,18 +997,18 @@ router.post('/reset-password', asyncHandler(async (req: AuthRequest, res: Respon
 
   // New-password policy validation. Uses the same path as register
   // and change-password.
-  const policyError = await validatePasswordPolicy(data.newPassword, {
+  const policy = await validatePasswordPolicy(data.newPassword, {
     username: tokenRow.username,
     email: tokenRow.email,
     displayName: tokenRow.display_name,
   });
-  if (policyError) {
-    res.status(400).json({ error: policyError });
+  if (!policy.valid) {
+    res.status(400).json({ error: policy.reason ?? 'Password does not meet the password policy' });
     return;
   }
 
   // Refuse same-password reuse.
-  if (await verifyPassword(data.newPassword, tokenRow.password_hash)) {
+  if (await verifyPassword(tokenRow.password_hash, data.newPassword)) {
     res.status(400).json({ error: 'New password must differ from the current password.' });
     return;
   }
@@ -963,7 +1018,20 @@ router.post('/reset-password', asyncHandler(async (req: AuthRequest, res: Respon
   // Atomic update: password, mark token consumed, invalidate every
   // existing session for the user. If any step fails the transaction
   // rolls back and the token remains usable.
+  let consumed = false;
   await db.transaction().execute(async (trx) => {
+    // Claim the token first, and only if nobody else has: two concurrent
+    // resets with the same token must not both succeed (security review A8).
+    const claimed = await trx
+      .updateTable('password_reset_token')
+      .set({ consumed_at: new Date() })
+      .where('id', '=', tokenRow.token_id)
+      .where('consumed_at', 'is', null)
+      .returning('id')
+      .executeTakeFirst();
+    if (!claimed) return;
+    consumed = true;
+
     await trx
       .updateTable('app_user')
       .set({
@@ -974,12 +1042,6 @@ router.post('/reset-password', asyncHandler(async (req: AuthRequest, res: Respon
       .where('id', '=', tokenRow.user_id)
       .execute();
 
-    await trx
-      .updateTable('password_reset_token')
-      .set({ consumed_at: new Date() })
-      .where('id', '=', tokenRow.token_id)
-      .execute();
-
     // Kill every active session for this user so an attacker who
     // already had a stolen cookie loses access at the same instant
     // the legitimate user resets.
@@ -987,7 +1049,16 @@ router.post('/reset-password', asyncHandler(async (req: AuthRequest, res: Respon
       .deleteFrom('session')
       .where('user_id', '=', tokenRow.user_id)
       .execute();
+    await trx
+      .deleteFrom('api_key')
+      .where('user_id', '=', tokenRow.user_id)
+      .execute();
   });
+
+  if (!consumed) {
+    genericRejection();
+    return;
+  }
 
   await logAudit(db, {
     entityType: 'app_user',

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { listTags, autocompleteTags, createTag, updateTag, deleteTag } from '@/api/tags'
+import { listTags, createTag, updateTag, deleteTag } from '@/api/tags'
 import client from '@/api/client'
 
 vi.mock('@/api/client', () => ({
@@ -34,16 +34,6 @@ describe('tags.ts', () => {
       ;(client.get as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ data: {} })
       const result = await listTags()
       expect(result).toEqual([])
-    })
-  })
-
-  describe('autocompleteTags', () => {
-    it('forwards the q parameter', async () => {
-      ;(client.get as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ data: { data: [] } })
-
-      await autocompleteTags('crit')
-
-      expect(client.get).toHaveBeenCalledWith('/tags/autocomplete', { params: { q: 'crit' } })
     })
   })
 

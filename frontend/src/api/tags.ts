@@ -28,11 +28,6 @@ export async function listTags(): Promise<Tag[]> {
   return data.data ?? []
 }
 
-export async function autocompleteTags(q: string): Promise<Tag[]> {
-  const { data } = await client.get('/tags/autocomplete', { params: { q } })
-  return data.data ?? []
-}
-
 export async function createTag(payload: CreateTagPayload): Promise<Tag> {
   const { data } = await client.post('/tags', payload)
   return data

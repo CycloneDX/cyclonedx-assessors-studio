@@ -1,0 +1,178 @@
+/**
+ * Layout helpers shared by the PDF report exports.
+ *
+ * Documents are created with `bufferPages` so the footer is stamped
+ * onto every page once the content is laid out, instead of being
+ * written inline. pdfkit starts a new page whenever text is drawn
+ * below the bottom margin, so inline footers used to spill onto extra
+ * blank pages.
+ */
+import PDFDocument from 'pdfkit';
+
+export type PdfDoc = InstanceType<typeof PDFDocument>;
+
+const MARGIN = 50;
+const CELL_PADDING = 4;
+const FOOTER_FONT_SIZE = 8;
+
+export function createReportDocument(): PdfDoc {
+  return new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true });
+}
+
+/** Lowest y that content may reach on the current page. */
+function contentBottom(doc: PdfDoc): number {
+  return doc.page.height - doc.page.margins.bottom;
+}
+
+/** Start a new page unless `height` more points fit on this one. */
+export function ensureSpace(doc: PdfDoc, height: number): void {
+  if (doc.y + height > contentBottom(doc)) {
+    doc.addPage();
+  }
+}
+
+/**
+ * Format a 0..1 score as a whole percentage. Only a missing or
+ * non-numeric score is "N/A"; a score of 0 is a real result.
+ */
+export function formatPercent(score: unknown): string {
+  if (score === null || score === undefined || score === '') return 'N/A';
+  const n = Number(score);
+  if (!Number.isFinite(n)) return 'N/A';
+  return `${Math.round(n * 100)}%`;
+}
+
+export function sectionHeading(doc: PdfDoc, title: string): void {
+  ensureSpace(doc, 60);
+  doc.x = doc.page.margins.left;
+  doc.fontSize(16).fillColor('#000000').text(title, { underline: true });
+  doc.moveDown(0.5);
+}
+
+export interface TableColumn {
+  header: string;
+  width: number;
+}
+
+/** A table cell: plain text, or text with its own colour or weight. */
+export type TableCell = string | { text: string; color?: string; bold?: boolean };
+
+interface RowStyle {
+  fontSize: number;
+  background?: string;
+  bold?: boolean;
+}
+
+const HEADER_STYLE: RowStyle = { fontSize: 9, background: '#eef1f5', bold: true };
+const BODY_STYLE: RowStyle = { fontSize: 8.5 };
+
+function cellParts(cell: TableCell | undefined, style: RowStyle) {
+  if (cell === undefined) return { text: '', color: '#000000', bold: Boolean(style.bold) };
+  if (typeof cell === 'string') return { text: cell, color: '#000000', bold: Boolean(style.bold) };
+  return { text: cell.text, color: cell.color ?? '#000000', bold: cell.bold ?? Boolean(style.bold) };
+}
+
+function rowHeight(doc: PdfDoc, columns: TableColumn[], cells: TableCell[], style: RowStyle): number {
+  doc.fontSize(style.fontSize);
+  const cellHeights = columns.map((col, i) => {
+    const { text, bold } = cellParts(cells[i], style);
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica');
+    return doc.heightOfString(text, { width: col.width - CELL_PADDING * 2 });
+  });
+  doc.font('Helvetica');
+  return Math.max(...cellHeights) + CELL_PADDING * 2;
+}
+
+function drawRow(doc: PdfDoc, columns: TableColumn[], cells: TableCell[], style: RowStyle, height: number): void {
+  doc.fontSize(style.fontSize);
+  const rowY = doc.y;
+  const left = doc.page.margins.left;
+  const tableWidth = columns.reduce((sum, col) => sum + col.width, 0);
+
+  if (style.background) {
+    doc.save().fillColor(style.background).rect(left, rowY, tableWidth, height).fill().restore();
+  }
+
+  // Every cell is drawn at the same rowY; text() moves doc.y, so it is
+  // reset after the row rather than read between cells.
+  let x = left;
+  columns.forEach((col, i) => {
+    const { text, color, bold } = cellParts(cells[i], style);
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fillColor(color);
+    doc.text(text, x + CELL_PADDING, rowY + CELL_PADDING, {
+      width: col.width - CELL_PADDING * 2,
+      align: 'left',
+    });
+    x += col.width;
+  });
+  doc.font('Helvetica').fillColor('#000000');
+
+  doc
+    .save()
+    .strokeColor('#dddddd')
+    .lineWidth(0.5)
+    .moveTo(left, rowY + height)
+    .lineTo(left + tableWidth, rowY + height)
+    .stroke()
+    .restore();
+
+  doc.x = left;
+  doc.y = rowY + height;
+}
+
+/**
+ * Draw a table whose rows grow to fit wrapped text. The header row is
+ * repeated at the top of each page the table continues onto.
+ */
+export function drawTable(doc: PdfDoc, columns: TableColumn[], rows: TableCell[][]): void {
+  const headers = columns.map((col) => col.header);
+  const headerHeight = rowHeight(doc, columns, headers, HEADER_STYLE);
+
+  // Keep the header together with at least the first row.
+  const firstHeight = rows.length > 0 ? rowHeight(doc, columns, rows[0], BODY_STYLE) : 0;
+  ensureSpace(doc, headerHeight + firstHeight);
+  drawRow(doc, columns, headers, HEADER_STYLE, headerHeight);
+
+  for (const row of rows) {
+    const height = rowHeight(doc, columns, row, BODY_STYLE);
+    if (doc.y + height > contentBottom(doc)) {
+      doc.addPage();
+      drawRow(doc, columns, headers, HEADER_STYLE, headerHeight);
+    }
+    drawRow(doc, columns, row, BODY_STYLE, height);
+  }
+  doc.moveDown();
+}
+
+/**
+ * Stamp "Generated by CycloneDX Assessors Studio", the timestamp and "Page n of m"
+ * at the foot of every buffered page. The bottom margin is lifted while
+ * writing so the footer text does not trigger a page break.
+ */
+export function stampFooters(doc: PdfDoc, timestamp: string): void {
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    const bottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    const left = doc.page.margins.left;
+    const width = doc.page.width - left - doc.page.margins.right;
+    const y = doc.page.height - bottomMargin + 15;
+    doc.fontSize(FOOTER_FONT_SIZE).fillColor('#666666');
+    doc.text(`Generated by CycloneDX Assessors Studio · ${timestamp}`, left, y, { width, align: 'left', lineBreak: false });
+    doc.text(`Page ${i - range.start + 1} of ${range.count}`, left, y, { width, align: 'right', lineBreak: false });
+    doc.page.margins.bottom = bottomMargin;
+  }
+  doc.fillColor('#000000');
+}
+
+/** Finish the document and collect its bytes. */
+export function renderToBuffer(doc: PdfDoc): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+    doc.end();
+  });
+}

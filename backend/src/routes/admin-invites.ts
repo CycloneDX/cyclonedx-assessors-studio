@@ -6,7 +6,7 @@ import { getConfig } from '../config/index.js';
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
-import { type AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
+import { type AuthRequest, requireAuth, requirePermission, requireSession } from '../middleware/auth.js';
 import { generateToken, hashToken } from '../utils/crypto.js';
 import { VALID_ROLE_KEYS } from '../utils/roles.js';
 
@@ -41,7 +41,7 @@ const createInviteSchema = z.object({
  *
  * Reports whether an outbound SMTP channel is configured so the UI can
  * warn the admin up front that the invite will not be emailed. We keep
- * this endpoint separate from /admin/integrations/smtp (which exposes
+ * this endpoint separate from /admin/integrations/status (which exposes
  * the host, port, and other details and is gated on admin.settings)
  * because user managers who hold admin.users but not admin.settings
  * still need to know whether they must hand deliver the token.
@@ -70,7 +70,7 @@ router.get(
  */
 router.post(
   '/',
-  requireAuth,
+  requireSession,
   requirePermission('admin.users'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -191,7 +191,7 @@ router.get(
  */
 router.delete(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.users'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     if (!req.user) {

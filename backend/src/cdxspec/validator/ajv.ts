@@ -106,6 +106,7 @@ export function getValidator(version: CdxSpecVersion): ValidateFunction {
 
 /**
  * Exposed for tests that want to exercise a cold Ajv boot.
+ * @internal Test seam; not part of the module API.
  */
 export function resetAjvCacheForTests(): void {
   cachedAjv = null;

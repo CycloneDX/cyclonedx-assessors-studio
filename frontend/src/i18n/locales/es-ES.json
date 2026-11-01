@@ -116,7 +116,9 @@
     "password": "Contraseña",
     "signIn": "Iniciar sesión",
     "enterCredentials": "Ingrese el nombre de usuario y contraseña",
-    "loginFailed": "Error de inicio de sesión. Por favor, intente de nuevo."
+    "loginFailed": "Error de inicio de sesión. Por favor, intente de nuevo.",
+    "forgotPassword": "¿Ha olvidado su contraseña?",
+    "resetDone": "Su contraseña se ha restablecido. Inicie sesión con su nueva contraseña."
   },
   "setup": {
     "welcome": "Bienvenido a Assessors Studio",
@@ -587,5 +589,23 @@
   },
   "dropZones": {
     "makeRootLevel": "Suelte aquí para hacer nivel raíz"
+  },
+  "passwordReset": {
+    "forgotTitle": "Restablecer la contraseña",
+    "forgotIntro": "Introduzca la dirección de correo de su cuenta. Si corresponde a una cuenta, le enviaremos un enlace para elegir una nueva contraseña.",
+    "email": "Correo electrónico",
+    "enterEmail": "Introduzca su dirección de correo electrónico",
+    "sendLink": "Enviar enlace de restablecimiento",
+    "requestSent": "Si existe una cuenta con esa dirección, le hemos enviado un enlace de restablecimiento. El enlace caduca en 30 minutos.",
+    "requestFailed": "No se pudo enviar la solicitud. Inténtelo de nuevo.",
+    "resetTitle": "Elija una nueva contraseña",
+    "newPassword": "Nueva contraseña",
+    "confirmPassword": "Confirme la nueva contraseña",
+    "minLength": "Al menos {n} caracteres",
+    "mismatch": "Las contraseñas no coinciden",
+    "setPassword": "Guardar nueva contraseña",
+    "missingToken": "Este enlace de restablecimiento está incompleto. Vuelva a abrir el enlace de su correo o solicite uno nuevo.",
+    "resetFailed": "No se pudo restablecer la contraseña. Puede que el enlace haya caducado; solicite uno nuevo.",
+    "backToLogin": "Volver a iniciar sesión"
   }
 }

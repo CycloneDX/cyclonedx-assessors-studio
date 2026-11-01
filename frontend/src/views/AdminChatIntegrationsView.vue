@@ -235,7 +235,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import client from '@/api/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import EventTypeSelector from '@/components/shared/EventTypeSelector.vue'
@@ -294,7 +294,7 @@ async function fetchAllPlatforms() {
     platformData[p.key].loading = true
     platformData[p.key].error = null
     try {
-      const { data } = await axios.get('/api/v1/integrations/chat', { params: { platform: p.key } })
+      const { data } = await client.get('/integrations/chat', { params: { platform: p.key } })
       platformData[p.key].items = data.data || []
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string }
@@ -379,7 +379,7 @@ async function fetchIntegrations() {
   error.value = null
   selectedIntegration.value = null
   try {
-    const { data } = await axios.get('/api/v1/integrations/chat', {
+    const { data } = await client.get('/integrations/chat', {
       params: { platform: activePlatform.value },
     })
     integrations.value = data.data || []
@@ -421,7 +421,7 @@ async function saveIntegration() {
   saving.value = true
   try {
     if (editingId.value) {
-      await axios.put(`/api/v1/integrations/chat/${editingId.value}`, {
+      await client.put(`/integrations/chat/${editingId.value}`, {
         name: form.value.name,
         webhookUrl: form.value.webhookUrl,
         channelName: form.value.channelName || null,
@@ -430,7 +430,7 @@ async function saveIntegration() {
       })
       ElMessage.success(t('chatIntegrations.updated'))
     } else {
-      await axios.post('/api/v1/integrations/chat', {
+      await client.post('/integrations/chat', {
         name: form.value.name,
         platform: form.value.platform,
         webhookUrl: form.value.webhookUrl,
@@ -454,7 +454,7 @@ async function saveIntegration() {
 
 async function testIntegration(row: Record<string, unknown>) {
   try {
-    const { data } = await axios.post(`/api/v1/integrations/chat/${row.id as string}/test`)
+    const { data } = await client.post(`/integrations/chat/${row.id as string}/test`)
     testResult.value = data
     testResultVisible.value = true
   } catch (err: unknown) {
@@ -466,21 +466,6 @@ async function testIntegration(row: Record<string, unknown>) {
   }
 }
 
-async function enableIntegration(row: Record<string, unknown>) {
-  try {
-    await axios.post(`/api/v1/integrations/chat/${row.id as string}/enable`)
-    ElMessage.success(t('chatIntegrations.enabled'))
-    if (props.embedded) {
-      await fetchAllPlatforms()
-    } else {
-      await fetchIntegrations()
-    }
-  } catch (err: unknown) {
-    const e = err as { response?: { data?: { error?: string } } }
-    ElMessage.error(e?.response?.data?.error || 'Failed to enable')
-  }
-}
-
 async function confirmDelete(row: Record<string, unknown>) {
   try {
     await ElMessageBox.confirm(
@@ -488,7 +473,7 @@ async function confirmDelete(row: Record<string, unknown>) {
       t('common.confirm'),
       { type: 'warning' },
     )
-    await axios.delete(`/api/v1/integrations/chat/${row.id}`)
+    await client.delete(`/integrations/chat/${row.id}`)
     ElMessage.success(t('chatIntegrations.deleted'))
     if (props.embedded) {
       await fetchAllPlatforms()
@@ -504,8 +489,8 @@ async function fetchDeliveries() {
   if (!selectedIntegration.value) return
   const offset = (deliveryPage.value - 1) * deliveryPagination.value.limit
   try {
-    const { data } = await axios.get(
-      `/api/v1/integrations/chat/${selectedIntegration.value.id}/deliveries`,
+    const { data } = await client.get(
+      `/integrations/chat/${selectedIntegration.value.id}/deliveries`,
       { params: { limit: deliveryPagination.value.limit, offset } },
     )
     deliveries.value = data.data || []

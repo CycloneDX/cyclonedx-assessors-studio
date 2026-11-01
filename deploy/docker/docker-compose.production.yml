@@ -18,21 +18,21 @@
 # it in the database. Set JWT_SECRET explicitly when running multiple
 # replicas or managing the signing secret externally.
 #
-# Required environment variables:
-#   POSTGRES_PASSWORD   - Database password. The compose file refuses to
-#                         start when this is unset. Generate a strong
-#                         random value, for example:
-#                           openssl rand -base64 32
+# Secrets: every credential is a Docker Compose secret (a file mounted
+# at /run/secrets/<name>), never an environment variable, so none of
+# them shows up in `docker inspect` or /proc/*/environ (security review
+# W5). Create the files once, before the first start:
+#   ./init-secrets.sh
+# It generates the database password, encryption key, JWT secret and
+# setup token, creates empty files for the optional ones (SMTP, metrics,
+# S3), and never overwrites a file that already exists. The stack will
+# not start while any of the files is missing.
 #
 # Optional overrides:
-#   APP_IMAGE           - Image to run. Pin to a version for production,
-#                         e.g. cyclonedx/cyclonedx-assessors-studio:1.0.0
+#   APP_IMAGE           - Image to run. Pin by digest for production,
+#                         e.g. ghcr.io/<owner>/cyclonedx-assessors-studio@sha256:...
 #   APP_PORT            - Host port to publish (default: 3001)
 #   CORS_ORIGIN         - Allowed CORS origin (default: same as app URL)
-#   JWT_SECRET          - Override the auto-generated signing secret
-#                         (>= 32 chars, cryptographically random). When
-#                         unset the backend generates and persists one
-#                         on first run.
 #
 # TLS: For production TLS, place a reverse proxy (nginx, traefik, caddy)
 # in front of this stack, or terminate TLS at an ingress load balancer.
@@ -40,15 +40,30 @@
 
 services:
   db:
-    image: postgres:17-alpine
+    # Pinned multi-arch digest (2026-10-22); refresh with
+    # `docker buildx imagetools inspect postgres:17-alpine`.
+    image: postgres:17-alpine@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
     environment:
       POSTGRES_DB: assessors_studio
       POSTGRES_USER: assessors_studio
-      # Fail closed: the compose file will not start if the operator
-      # has not set POSTGRES_PASSWORD. Previously a weak literal default
-      # was baked in here, which could silently ship a known password
-      # to production.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a strong random value before running this stack}
+      # Read from the secret file; the postgres image supports *_FILE.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    security_opt:
+      - no-new-privileges:true
+    # The postgres entrypoint chowns PGDATA and su-execs to the postgres user,
+    # so it needs these from an otherwise-empty set.
+    cap_drop:
+      - ALL
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    pids_limit: 512
+    mem_limit: 512m
+    memswap_limit: 512m
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -56,26 +71,62 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     restart: unless-stopped
     # Uncomment to expose PostgreSQL for external tooling:
     # ports:
     #   - "5432:5432"
 
   app:
-    image: ${APP_IMAGE:-cyclonedx/cyclonedx-assessors-studio:snapshot}
-    pull_policy: always
+    # Built from this repository by default. The old default pulled
+    # upstream's mutable cyclonedx/cyclonedx-assessors-studio:snapshot
+    # tag, i.e. someone else's code (security review W6). Set APP_IMAGE
+    # (pinned by digest) and APP_PULL_POLICY=always to run a published image.
+    image: ${APP_IMAGE:-cyclonedx-assessors-studio:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    pull_policy: ${APP_PULL_POLICY:-build}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "${APP_PORT:-3001}:3001"
+      # A3: bind to loopback; front it with the reverse proxy / ingress. The
+      # bare "HOST:CONTAINER" form publishes on 0.0.0.0 (every interface).
+      - "127.0.0.1:${APP_PORT:-3001}:3001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    pids_limit: 512
+    mem_limit: 2048m
+    memswap_limit: 2048m   # == mem_limit -> no swap. Sized for the app startup
+                           # spike (boot-tested); the postgres-backed prod path
+                           # steady-states well under this and can be tuned down.
     environment:
       # Core
       NODE_ENV: production
       PORT: 3001
+      # Number of reverse proxies in front of the app (this file binds to
+      # 127.0.0.1 and expects one). Wrong in either direction is a security
+      # issue: 0 puts every user in one rate-limit bucket; too high lets a
+      # client spoof X-Forwarded-For.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
       DATABASE_PROVIDER: postgres
-      DATABASE_URL: postgresql://assessors_studio:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/assessors_studio
-      JWT_SECRET: ${JWT_SECRET:-}
+      # The password is not in the URL: the backend inserts it from
+      # DATABASE_PASSWORD_FILE, the same secret the db service reads.
+      DATABASE_URL: postgresql://assessors_studio@db:5432/assessors_studio
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      # Generated by init-secrets.sh. An empty file falls back to a
+      # secret generated on first run and stored in the database.
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      # One-time token the setup wizard asks for (security review W3).
+      SETUP_TOKEN_FILE: /run/secrets/setup_token
       JWT_EXPIRY: ${JWT_EXPIRY:-24h}
       # The browser and the API share an origin, so CORS is effectively
       # a no-op for the packaged deployment. Kept for compatibility with
@@ -122,7 +173,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_PASS_FILE: /run/secrets/smtp_pass
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TLS_REJECT_UNAUTHORIZED: ${SMTP_TLS_REJECT_UNAUTHORIZED:-true}
 
@@ -135,16 +186,27 @@ services:
 
       # Prometheus metrics
       METRICS_ENABLED: ${METRICS_ENABLED:-false}
-      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      METRICS_TOKEN_FILE: /run/secrets/metrics_token
       METRICS_PREFIX: ${METRICS_PREFIX:-cdxa_}
       METRICS_DOMAIN_REFRESH_INTERVAL: ${METRICS_DOMAIN_REFRESH_INTERVAL:-60}
 
       # Encryption at rest
-      MASTER_ENCRYPTION_KEY: ${MASTER_ENCRYPTION_KEY:-}
-      REQUIRE_ENCRYPTION: ${REQUIRE_ENCRYPTION:-false}
+      MASTER_ENCRYPTION_KEY_FILE: /run/secrets/master_encryption_key
+      # Required in production: secrets and the platform signing key are
+      # encrypted at rest. The backend refuses to start without a key.
+      REQUIRE_ENCRYPTION: ${REQUIRE_ENCRYPTION:-true}
     secrets:
+      - postgres_password
+      - jwt_secret
+      - setup_token
+      - master_encryption_key
+      - smtp_pass
+      - metrics_token
       - s3_access_key_id
       - s3_secret_access_key
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
     restart: unless-stopped
 
 volumes:
@@ -152,21 +214,27 @@ volumes:
 
 # Docker Compose secrets.
 #
-# The S3 credentials live in separate files rather than in the
-# environment block. Each file contains a single value (no quoting, no
-# prefix, no trailing newline needed — the backend trims one). Keep
-# these files outside the repository.
+# One value per file (no quoting, no prefix; one trailing newline is
+# ignored). ./init-secrets.sh creates them in ./secrets (a 700 directory),
+# which is git- and docker-ignored. Keep a copy of master_encryption_key
+# somewhere safe: without it, encrypted data cannot be read.
 #
-# Example:
-#   mkdir -p ./secrets
-#   printf '%s' 'AKIA...' > ./secrets/s3_access_key_id
-#   printf '%s' 'wJalrXUt...' > ./secrets/s3_secret_access_key
-#   chmod 600 ./secrets/s3_access_key_id ./secrets/s3_secret_access_key
-#
-# Override S3_ACCESS_KEY_ID_FILE / S3_ACCESS_KEY_ID at the env level
-# and you can use any Docker-managed external secret (Swarm,
-# Kubernetes) instead of a file on disk.
+# To use secrets managed elsewhere (Swarm, Kubernetes, Vault agent),
+# replace `file:` with `external: true` or mount the files at the same
+# /run/secrets paths.
 secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  jwt_secret:
+    file: ./secrets/jwt_secret
+  setup_token:
+    file: ./secrets/setup_token
+  master_encryption_key:
+    file: ./secrets/master_encryption_key
+  smtp_pass:
+    file: ./secrets/smtp_pass
+  metrics_token:
+    file: ./secrets/metrics_token
   s3_access_key_id:
     file: ./secrets/s3_access_key_id
   s3_secret_access_key:

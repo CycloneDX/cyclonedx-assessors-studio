@@ -49,15 +49,13 @@
           :closable="false"
           class="declarations-alert"
         />
-        <el-alert
-          v-else-if="affirmation?.sealedAt"
-          :title="t('declarations.sealedBanner')"
-          :description="sealedSummary"
-          type="success"
-          show-icon
-          :closable="false"
-          class="declarations-alert"
-        />
+        <div v-else-if="affirmation?.sealedAt" class="seal-stamp" role="status">
+          <img :src="sealMark" alt="" class="seal-stamp-mark" />
+          <div class="seal-stamp-text">
+            <span class="seal-stamp-title">{{ t('declarations.sealedBanner') }}</span>
+            <span v-if="sealedSummary" class="seal-stamp-summary">{{ sealedSummary }}</span>
+          </div>
+        </div>
 
         <!-- Empty state when no affirmation exists yet -->
         <div v-if="!affirmation" class="empty-state-contextual">
@@ -374,7 +372,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import client from '@/api/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, Document, ArrowRight } from '@element-plus/icons-vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
@@ -383,6 +381,7 @@ import SearchSelect from '@/components/shared/SearchSelect.vue'
 import type { SelectOption } from '@/components/shared/SearchSelect.vue'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/dateFormat'
+import sealMark from '@/assets/images/attestation-seal.svg'
 import {
   getAffirmationByAssessment,
   createAffirmation,
@@ -492,8 +491,8 @@ function canSignSlot(slot: AffirmationSlot): boolean {
 
 async function fetchAssessment(): Promise<void> {
   try {
-    const response = await axios.get(
-      `/api/v1/assessments/${encodeURIComponent(assessmentId.value)}`,
+    const response = await client.get(
+      `/assessments/${encodeURIComponent(assessmentId.value)}`,
     )
     assessmentTitle.value = response.data?.data?.title || ''
   } catch {
@@ -508,7 +507,7 @@ async function fetchAffirmation(): Promise<void> {
 
 async function fetchUsers(): Promise<void> {
   try {
-    const response = await axios.get('/api/v1/users/assignable')
+    const response = await client.get('/users/assignable')
     users.value = response.data?.data || []
   } catch {
     users.value = []
@@ -890,6 +889,42 @@ onMounted(fetchAll)
 
 .declarations-alert {
   margin-bottom: var(--cat-spacing-2);
+}
+
+/* Attestation seal — shown when the affirmation is cryptographically sealed. */
+.seal-stamp {
+  display: flex;
+  align-items: center;
+  gap: var(--cat-spacing-3);
+  padding: var(--cat-spacing-3) var(--cat-spacing-4);
+  margin-bottom: var(--cat-spacing-2);
+  background: rgba(31, 157, 104, 0.08);
+  border: 1px solid rgba(31, 157, 104, 0.35);
+  border-radius: var(--cat-radius-lg);
+}
+
+.seal-stamp-mark {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.seal-stamp-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.seal-stamp-title {
+  font-size: var(--cat-font-size-sm);
+  font-weight: var(--cat-font-weight-semibold);
+  color: var(--cat-text-primary);
+}
+
+.seal-stamp-summary {
+  font-size: var(--cat-font-size-xs);
+  color: var(--cat-text-secondary);
 }
 
 .loading-container {

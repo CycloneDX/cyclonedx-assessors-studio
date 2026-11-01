@@ -7,32 +7,6 @@ import { setupHttpTests, loginAs } from '../helpers/http.js';
 describe('Admin Storage Endpoints (HTTP integration)', () => {
   setupHttpTests();
 
-  describe('GET /api/v1/admin/integrations/storage', () => {
-    it('should return storage config for admin users', async () => {
-      const agent = await loginAs('admin');
-      const res = await agent.get('/api/v1/admin/integrations/storage');
-
-      expect(res.status).toBe(200);
-      expect(res.body.provider).toBe('database');
-      expect(res.body.maxFileSize).toBe(52428800);
-    });
-
-    it('should reject non-admin users', async () => {
-      const agent = await loginAs('assessor');
-      const res = await agent.get('/api/v1/admin/integrations/storage');
-
-      expect(res.status).toBe(403);
-    });
-
-    it('should reject unauthenticated requests', async () => {
-      const { getAgent } = await import('../helpers/http.js');
-      const agent = getAgent();
-      const res = await agent.get('/api/v1/admin/integrations/storage');
-
-      expect(res.status).toBe(401);
-    });
-  });
-
   describe('POST /api/v1/admin/integrations/test/storage', () => {
     it('should verify database connectivity for admin users', async () => {
       const agent = await loginAs('admin');

@@ -110,10 +110,14 @@ async function waitForHealth(api: Awaited<ReturnType<typeof request.newContext>>
   );
 }
 
+const E2E_SETUP_TOKEN = 'e2e-setup-token-0123456789abcdef';
+
 async function ensureAdmin(api: Awaited<ReturnType<typeof request.newContext>>): Promise<void> {
   // Probe: if a user already exists, /api/v1/setup returns 403.
   const probe = await api.post('/api/v1/setup', {
     data: {
+      // Matches SETUP_TOKEN in the backend webServer env (playwright.config.ts).
+      setupToken: E2E_SETUP_TOKEN,
       username: ADMIN_USERNAME,
       email: ADMIN_EMAIL,
       displayName: ADMIN_DISPLAY_NAME,
@@ -267,7 +271,9 @@ async function seedDemoData(api: Awaited<ReturnType<typeof request.newContext>>)
   if (!login.ok()) {
     throw new Error(`Cannot log in as E2E admin to seed demo data: ${login.status()}`);
   }
-  const seed = await api.post('/api/v1/setup/seed-demo');
+  // Demo users can only sign in when a password is supplied here; the one
+  // in demo-data.json is never used (security review A1).
+  const seed = await api.post('/api/v1/setup/seed-demo', { data: { demoUserPassword: DEMO_PASSWORD } });
   // 201 = newly seeded, 200 = already seeded.
   if (seed.status() !== 201 && seed.status() !== 200) {
     throw new Error(

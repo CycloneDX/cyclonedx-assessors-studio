@@ -1,0 +1,57 @@
+###############################################################################
+# CycloneDX Assessors Studio - integration sandbox overlay (staging only, never production)
+#
+#   docker compose -f docker-compose.production.yml -f docker-compose.sandbox.yml up -d
+#
+# Adds:
+#   mailpit  SMTP sink. The app sends every email (notifications, password
+#            reset links) here. Read them at http://127.0.0.1:8025.
+#   canary   An internal HTTP service that logs every request it gets. It
+#            is the SSRF probe: point a webhook or chat integration at
+#            http://canary:8080/ and the app must refuse it, and
+#            `docker compose logs canary` must stay empty (security
+#            review X1/I2/X10).
+#
+# Slack/Teams/Mattermost need real test workspaces with incoming webhooks,
+# and S3 storage a real test bucket; those are configured in the app.
+###############################################################################
+
+x-hardened: &hardened
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+  pids_limit: 128
+  mem_limit: 256m
+  memswap_limit: 256m
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+  restart: unless-stopped
+
+services:
+  mailpit:
+    <<: *hardened
+    # Pinned multi-arch digest (2026-10-22).
+    image: axllent/mailpit:v1.27@sha256:e22dce5b36f93c77082e204a3942fb6b283b7896e057458400a4c88344c3df68
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  canary:
+    <<: *hardened
+    # Pinned multi-arch digest (2026-10-22). Logs each request as JSON.
+    image: mendhak/http-https-echo:37@sha256:f55000d9196bd3c853d384af7315f509d21ffb85de315c26e9874033b9f83e15
+    environment:
+      HTTP_PORT: 8080
+      HTTPS_PORT: 8443
+
+  app:
+    environment:
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_SECURE: "false"
+      SMTP_FROM: assessors-studio@sandbox.test

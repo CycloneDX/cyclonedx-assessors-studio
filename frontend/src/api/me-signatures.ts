@@ -120,11 +120,6 @@ export async function listMySignatures(): Promise<SignatureListResponse> {
   return data as SignatureListResponse
 }
 
-export async function getMySignature(id: string): Promise<StoredSignature> {
-  const { data } = await client.get(`/me/signatures/${encodeURIComponent(id)}`)
-  return data as StoredSignature
-}
-
 export async function createMySignature(payload: CreateSignatureInput): Promise<StoredSignature> {
   const { data } = await client.post('/me/signatures', payload)
   return data as StoredSignature

@@ -1,282 +1,208 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { nextTick } from 'vue'
-import axios from 'axios'
 
 vi.mock('vue-router', async () => {
   const { createVueRouterMock } = await import('@/__tests__/helpers/vueRouterMock')
-  return createVueRouterMock()
+  return createVueRouterMock({ route: { path: '/admin/user-management' } })
 })
 
 vi.mock('vue-i18n', () => ({
   useI18n: vi.fn(() => ({ t: (key: string) => key, locale: { value: 'en-US' } })),
-  createI18n: vi.fn(() => ({ global: { t: (k: string) => k }, install: vi.fn() }))
+  createI18n: vi.fn(() => ({ global: { t: (k: string) => k, locale: { value: 'en-US' } }, install: vi.fn() })),
 }))
 
-vi.mock('axios', () => {
-  const mockAxiosInstance = {
-    get: vi.fn().mockResolvedValue({ data: { data: [] } }),
-    post: vi.fn().mockResolvedValue({ data: {} }),
-    put: vi.fn().mockResolvedValue({ data: {} }),
-    delete: vi.fn().mockResolvedValue({ data: {} }),
-    interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
-  }
-  return { default: { ...mockAxiosInstance, create: vi.fn(() => mockAxiosInstance) } }
-})
+vi.mock('@/api/client', () => ({
+  default: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+  },
+}))
 
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
-  ElMessageBox: { confirm: vi.fn() }
+  ElMessageBox: { confirm: vi.fn() },
 }))
 
-const ElStubs = {
-  ElButton: { template: '<button @click="$emit(\'click\')"><slot /></button>', props: ['type', 'loading', 'disabled'] },
-  ElTable: { template: '<table><slot /></table>', props: ['data', 'stripe'] },
-  ElTableColumn: { template: '<col />', props: ['prop', 'label', 'width', 'minWidth', 'sortable', 'align', 'type'] },
-  ElPagination: { template: '<div class="pagination" />' },
-  ElAlert: { template: '<div class="alert"><slot /></div>', props: ['type', 'closable', 'description'] },
-  ElIcon: { template: '<i><slot /></i>' },
-  ElDialog: { template: '<div class="dialog" v-if="modelValue"><slot /></div>', props: ['modelValue', 'title'] },
-  ElForm: { template: '<form><slot /></form>' },
-  ElFormItem: { template: '<div class="form-item"><slot /></div>', props: ['label'] },
-  ElInput: { template: '<input />', props: ['modelValue', 'placeholder', 'disabled'] },
-  ElSelect: { template: '<select><slot /></select>', props: ['modelValue'] },
-  ElOption: { template: '<option><slot /></option>' },
-  Loading: { template: '<span>Loading</span>' },
-  PageHeader: { template: '<div class="page-header"><slot name="actions" /></div>', props: ['title'] },
-  RowActions: { template: '<div class="row-actions" />' },
-  IconButton: { template: '<button />' },
+import AdminUsersView from '@/views/AdminUsersView.vue'
+import client from '@/api/client'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { elStubs } from '@/__tests__/helpers/elStubs'
+
+const alice = { id: 'u1', username: 'alice', email: 'alice@example.test', displayName: 'Alice', role: 'assessor', isActive: true }
+const bob = { id: 'u2', username: 'bob', email: 'bob@example.test', displayName: 'Bob', role: 'assessee', isActive: false }
+
+function mountView() {
+  return mount(AdminUsersView, { shallow: true, global: { stubs: elStubs } })
 }
 
-const AdminUsersView = {
-  template: `
-    <div class="admin-users-container">
-      <PageHeader :title="'users.title'">
-        <template #actions>
-          <el-button type="primary" @click="openCreateDialog">Create User</el-button>
-        </template>
-      </PageHeader>
-      <div class="admin-users-content">
-        <div v-if="loading" class="loading-container">
-          <el-icon><Loading /></el-icon>
-        </div>
-        <div v-else-if="error" class="error-container">
-          <el-alert type="error" :description="error" />
-          <el-button @click="fetchUsers">Retry</el-button>
-        </div>
-        <template v-else>
-          <div v-if="users.length === 0" class="empty-state">
-            <p>No users found</p>
-          </div>
-          <template v-else>
-            <el-table :data="users" stripe>
-              <el-table-column prop="id" label="ID" width="80" />
-              <el-table-column prop="username" label="Username" />
-              <el-table-column prop="email" label="Email" />
-              <el-table-column prop="role" label="Role" />
-              <el-table-column label="Actions" width="150">
-                <template #default="{ row }">
-                  <div class="row-actions">
-                    <el-button type="primary" size="small" @click="editUser(row)">Edit</el-button>
-                    <el-button type="danger" size="small" @click="deleteUser(row)">Delete</el-button>
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-          </template>
-        </template>
-      </div>
-    </div>
-  `,
-  props: {},
-  setup() {
-    const users = ref([])
-    const loading = ref(false)
-    const error = ref('')
-
-    const fetchUsers = async () => {
-      loading.value = true
-      error.value = ''
-      try {
-        const response = await axios.get('/api/v1/users')
-        users.value = response.data.data || []
-      } catch (err: any) {
-        error.value = err.response?.data?.error || 'Failed to fetch users'
-      } finally {
-        loading.value = false
-      }
-    }
-
-    const openCreateDialog = () => {}
-    const editUser = (user: any) => {}
-    const deleteUser = (user: any) => {}
-
-    onMounted(() => {
-      fetchUsers()
-    })
-
-    return {
-      users,
-      loading,
-      error,
-      fetchUsers,
-      openCreateDialog,
-      editUser,
-      deleteUser
-    }
+function newUserForm(overrides = {}) {
+  return {
+    username: 'carol', email: 'carol@example.test', displayName: 'Carol',
+    password: 'Str0ng-Passw0rd!', confirmPassword: 'Str0ng-Passw0rd!',
+    role: 'assessee', isActive: true, ...overrides,
   }
 }
-
-import { ref, onMounted } from 'vue'
 
 describe('AdminUsersView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(client.get).mockResolvedValue({ data: { data: [alice, bob] } })
+    vi.mocked(client.post).mockResolvedValue({ data: {} })
+    vi.mocked(client.put).mockResolvedValue({ data: {} })
   })
 
-  it('renders PageHeader', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { data: [] }
+  describe('loading', () => {
+    it('fetches the user list on mount', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      expect(client.get).toHaveBeenCalledWith('/users')
+      expect(wrapper.vm.users).toEqual([alice, bob])
+      expect(wrapper.vm.loading).toBe(false)
     })
 
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
+    it('shows the server error when the list fails to load', async () => {
+      vi.mocked(client.get).mockRejectedValueOnce({ response: { status: 500, data: { error: 'db down' } } })
+      const wrapper = mountView()
+      await flushPromises()
+      expect(wrapper.vm.error).toBeTruthy()
+      expect(wrapper.vm.users).toEqual([])
     })
-
-    await flushPromises()
-    expect(wrapper.find('.page-header').exists()).toBe(true)
   })
 
-  it('shows loading state on mount', async () => {
-    let resolvePromise: any
-    vi.mocked(axios.get).mockImplementation(() => new Promise(resolve => {
-      resolvePromise = resolve
-    }))
-
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
+  describe('create user', () => {
+    it('requires username, email, display name and role', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.openNewUserDialog()
+      wrapper.vm.form = newUserForm({ role: '' })
+      await wrapper.vm.handleSave()
+      expect(ElMessage.error).toHaveBeenCalledWith('Please fill in all required fields')
+      expect(client.post).not.toHaveBeenCalled()
     })
 
-    await nextTick()
-    expect(wrapper.vm.loading).toBe(true)
-    expect(wrapper.find('.loading-container').exists()).toBe(true)
+    it('rejects a password confirmation that does not match', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.openNewUserDialog()
+      wrapper.vm.form = newUserForm({ confirmPassword: 'different' })
+      await wrapper.vm.handleSave()
+      expect(ElMessage.error).toHaveBeenCalledWith('Passwords do not match')
+      expect(client.post).not.toHaveBeenCalled()
+    })
 
-    // Resolve the promise to clean up
-    resolvePromise({ data: { data: [] } })
+    it('posts the new user without the confirmation field, then closes and reloads', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.openNewUserDialog()
+      wrapper.vm.form = newUserForm()
+      await wrapper.vm.handleSave()
+      expect(client.post).toHaveBeenCalledWith('/users', {
+        username: 'carol', email: 'carol@example.test', displayName: 'Carol',
+        password: 'Str0ng-Passw0rd!', role: 'assessee',
+      })
+      expect(wrapper.vm.showDialog).toBe(false)
+      expect(client.get).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps the dialog open and shows the server error when creation fails', async () => {
+      vi.mocked(client.post).mockRejectedValueOnce({ response: { status: 409, data: { error: 'Username taken' } } })
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.openNewUserDialog()
+      wrapper.vm.form = newUserForm()
+      await wrapper.vm.handleSave()
+      expect(ElMessage.error).toHaveBeenCalled()
+      expect(wrapper.vm.showDialog).toBe(true)
+      expect(wrapper.vm.saving).toBe(false)
+    })
   })
 
-  it('shows error state when API fails', async () => {
-    vi.mocked(axios.get).mockRejectedValue({
-      response: { data: { error: 'Failed to load' } }
+  describe('edit user', () => {
+    it('updates profile, role and status without sending a password or username', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.handleEdit(alice)
+      wrapper.vm.form.role = 'admin'
+      await wrapper.vm.handleSave()
+      expect(client.put).toHaveBeenCalledWith('/users/u1', {
+        email: 'alice@example.test', displayName: 'Alice', role: 'admin', isActive: true,
+      })
+      expect(client.post).not.toHaveBeenCalled()
     })
-
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
-    })
-
-    await flushPromises()
-    expect(wrapper.find('.error-container').exists()).toBe(true)
   })
 
-  it('displays users table with columns', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: {
-        data: [
-          { id: '1', username: 'user1', email: 'user1@test.com', role: 'Admin' },
-          { id: '2', username: 'user2', email: 'user2@test.com', role: 'Assessor' }
-        ]
-      }
+  describe('deactivate and reactivate', () => {
+    it('does not deactivate when the confirmation is cancelled', async () => {
+      vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.vm.handleDelete(alice)
+      expect(client.put).not.toHaveBeenCalled()
     })
 
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
+    it('deactivates the confirmed user', async () => {
+      vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce('confirm' as never)
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.vm.handleDelete(alice)
+      expect(client.put).toHaveBeenCalledWith('/users/u1/deactivate')
     })
 
-    await flushPromises()
-    expect(wrapper.find('table').exists()).toBe(true)
+    it('reactivates the confirmed user', async () => {
+      vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce('confirm' as never)
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.vm.handleReactivate(bob)
+      expect(client.put).toHaveBeenCalledWith('/users/u2/activate')
+    })
   })
 
-  it('shows empty state when no users', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { data: [] }
+  describe('bulk actions', () => {
+    it('refuses a bulk role change with no role chosen', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.handleSelectionChange([alice, bob])
+      wrapper.vm.bulkRoleChange = ''
+      await wrapper.vm.handleBulkRoleChange()
+      expect(ElMessage.error).toHaveBeenCalledWith('Please select a role')
+      expect(client.put).not.toHaveBeenCalled()
     })
 
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
+    it('changes the role of every selected user, then clears the selection', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.handleSelectionChange([alice, bob])
+      wrapper.vm.bulkRoleChange = 'assessor'
+      await wrapper.vm.handleBulkRoleChange()
+      expect(client.put).toHaveBeenCalledWith('/users/u1', { role: 'assessor' })
+      expect(client.put).toHaveBeenCalledWith('/users/u2', { role: 'assessor' })
+      expect(wrapper.vm.selectedUsers).toEqual([])
     })
 
-    await flushPromises()
-    expect(wrapper.find('.empty-state').exists()).toBe(true)
-  })
-
-  it('shows create user button in header', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { data: [] }
+    it('asks before deactivating the selection, naming the count', async () => {
+      vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.handleSelectionChange([alice, bob])
+      await wrapper.vm.handleBulkDeactivate()
+      expect(vi.mocked(ElMessageBox.confirm).mock.calls[0][0]).toContain('2 selected users')
+      expect(client.put).not.toHaveBeenCalled()
+      expect(wrapper.vm.selectedUsers).toEqual([alice, bob])
     })
 
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
+    it('deactivates every selected user once confirmed', async () => {
+      vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce('confirm' as never)
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.handleSelectionChange([alice, bob])
+      await wrapper.vm.handleBulkDeactivate()
+      expect(client.put).toHaveBeenCalledWith('/users/u1/deactivate')
+      expect(client.put).toHaveBeenCalledWith('/users/u2/deactivate')
+      expect(wrapper.vm.selectedUsers).toEqual([])
     })
-
-    await flushPromises()
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some(btn => btn.text().includes('Create User'))).toBe(true)
-  })
-
-  it('fetches users on mount', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { data: [] }
-    })
-
-    mount(AdminUsersView, {
-      global: { stubs: ElStubs }
-    })
-
-    await flushPromises()
-    expect(vi.mocked(axios.get)).toHaveBeenCalledWith('/api/v1/users')
-  })
-
-  it('has row actions for each user', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: {
-        data: [
-          { id: '1', username: 'user1', email: 'user1@test.com', role: 'Admin' }
-        ]
-      }
-    })
-
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
-    })
-
-    await flushPromises()
-    // Since table column scoped slots don't render with our stub, check component state
-    expect(wrapper.vm.users.length).toBe(1)
-    expect(wrapper.vm.users[0].id).toBe('1')
-  })
-
-  it('retry button refetches users', async () => {
-    const axiosGetSpy = vi.mocked(axios.get)
-    axiosGetSpy.mockClear()
-    axiosGetSpy
-      .mockRejectedValueOnce({ response: { data: { error: 'Error' } } })
-      .mockResolvedValueOnce({ data: { data: [] } })
-      .mockResolvedValueOnce({ data: { data: [] } })
-
-    const wrapper = mount(AdminUsersView, {
-      global: { stubs: ElStubs }
-    })
-
-    await flushPromises()
-    expect(wrapper.vm.error).toBe('Error')
-
-    const retryBtn = wrapper.find('.error-container button')
-    await retryBtn.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.vm.error).toBe('')
-    expect(axiosGetSpy.mock.calls.length).toBeGreaterThan(1)
   })
 })

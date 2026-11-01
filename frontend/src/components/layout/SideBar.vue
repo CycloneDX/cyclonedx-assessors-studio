@@ -25,7 +25,7 @@
       <!-- Manage -->
       <div class="nav-group">
         <div v-if="!uiStore.sidebarCollapsed" class="nav-group-label">{{ t('nav.manage') }}</div>
-        <div v-for="item in navItems.slice(1, 4)" :key="item.name" class="nav-item-wrapper">
+        <div v-for="item in navItems.slice(1)" :key="item.name" class="nav-item-wrapper">
           <RouterLink
             :to="item.path"
             class="nav-item"
@@ -95,6 +95,20 @@
           >
             <el-icon class="nav-icon"><CollectionTag /></el-icon>
             <span class="nav-label">{{ t('nav.tagsAdmin') }}</span>
+          </RouterLink>
+        </div>
+
+        <div v-if="authStore.hasAnyPermission('assessments.manage', 'evidence.delete', 'claims.edit')" class="nav-item-wrapper">
+          <RouterLink
+            to="/admin/trash"
+            class="nav-item"
+            :class="{ active: isActive('/admin/trash') }"
+            :title="uiStore.sidebarCollapsed ? t('nav.trash') : ''"
+            :aria-label="t('nav.trash')"
+            @click="closeMobileMenu"
+          >
+            <el-icon class="nav-icon"><Delete /></el-icon>
+            <span class="nav-label">{{ t('nav.trash') }}</span>
           </RouterLink>
         </div>
 
@@ -191,6 +205,7 @@ import {
   DocumentChecked,
   Collection,
   CollectionTag,
+  Delete,
   List,
   Lock,
   Key,
@@ -199,7 +214,10 @@ import {
   UserFilled,
   Setting,
   DArrowLeft,
-  DArrowRight
+  DArrowRight,
+  FirstAidKit,
+  Memo,
+  Calendar,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -213,21 +231,29 @@ interface NavItem {
   path: string
   icon: Record<string, unknown>
   badge?: string | number
+  /** Permission the page's list endpoint requires; hidden without it. */
+  permission?: string
 }
 
-const navItems = computed<NavItem[]>(() => [
+const visible = (items: NavItem[]) =>
+  items.filter((item) => !item.permission || authStore.hasPermission(item.permission))
+
+const navItems = computed<NavItem[]>(() => visible([
   { name: 'dashboard', label: t('nav.dashboard'), path: '/dashboard', icon: Odometer },
-  { name: 'entities', label: t('nav.entities', 'Entities'), path: '/entities', icon: OfficeBuilding },
-  { name: 'projects', label: t('nav.projects'), path: '/projects', icon: FolderOpened },
+  { name: 'entities', label: t('nav.entities', 'Entities'), path: '/entities', icon: OfficeBuilding, permission: 'entities.view' },
+  { name: 'projects', label: t('nav.projects'), path: '/projects', icon: FolderOpened, permission: 'projects.view' },
+  { name: 'schedule', label: 'Schedule', path: '/schedule', icon: Calendar, permission: 'assessments.view' },
   { name: 'standards', label: t('nav.standards'), path: '/standards', icon: Document },
-])
+]))
 
 // Activity: primary workflow items
-const activityItems = computed<NavItem[]>(() => [
-  { name: 'assessments', label: t('nav.assessments'), path: '/assessments', icon: DocumentChecked },
-  { name: 'evidence', label: t('nav.evidence'), path: '/evidence', icon: Collection },
-  { name: 'attestations', label: t('nav.attestations'), path: '/attestations', icon: Stamp },
-])
+const activityItems = computed<NavItem[]>(() => visible([
+  { name: 'assessments', label: t('nav.assessments'), path: '/assessments', icon: DocumentChecked, permission: 'assessments.view' },
+  { name: 'evidence', label: t('nav.evidence'), path: '/evidence', icon: Collection, permission: 'evidence.view' },
+  { name: 'mitigations', label: 'Mitigations', path: '/mitigations', icon: FirstAidKit, permission: 'claims.view' },
+  { name: 'claims', label: 'Claims', path: '/claims', icon: Memo, permission: 'claims.view' },
+  { name: 'attestations', label: t('nav.attestations'), path: '/attestations', icon: Stamp, permission: 'attestations.view' },
+]))
 
 const isActive = (path: string) => {
   return route.path.startsWith(path)

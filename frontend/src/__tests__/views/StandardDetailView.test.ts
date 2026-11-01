@@ -241,4 +241,21 @@ describe('StandardDetailView', () => {
 
     expect(wrapper.find('.breadcrumb').exists()).toBe(true)
   })
+
+  // Security review W2: the identifier is user/import controlled and must
+  // never reach ElMessageBox as an HTML string.
+  it('builds the delete confirmation without HTML strings', async () => {
+    const { ElMessageBox } = await import('element-plus')
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+    const wrapper = mount(StandardDetailView, { global: { stubs } })
+    ;(wrapper.vm as any).standard = { id: 's1', name: 'S' }
+    await (wrapper.vm as any).handleDeleteRequirement({
+      id: 'r1',
+      identifier: '<img src=x onerror=alert(1)>',
+      children: [{ id: 'r2', identifier: 'child', children: [] }],
+    })
+    const [message, , options] = vi.mocked(ElMessageBox.confirm).mock.calls.at(-1)!
+    expect(typeof message).not.toBe('string')
+    expect((options as Record<string, unknown>).dangerouslyUseHTMLString).toBeFalsy()
+  })
 })

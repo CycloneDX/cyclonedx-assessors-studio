@@ -39,3 +39,14 @@ export async function getPasswordPolicy(): Promise<PasswordPolicy> {
   const { data } = await client.get('/auth/password-policy')
   return data
 }
+
+// Public. The server answers the same way whether or not the address
+// belongs to an account.
+export async function requestPasswordReset(email: string): Promise<void> {
+  await client.post('/auth/forgot-password', { email })
+}
+
+// Public. The token comes from the emailed link.
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  await client.post('/auth/reset-password', { token, newPassword })
+}

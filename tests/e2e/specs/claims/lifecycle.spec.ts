@@ -22,9 +22,9 @@ import { uniqueEvidenceName } from '../../helpers/data.js';
  *
  * Permissions:
  *   admin    : claims.{view,create,edit}
- *   assessor : claims.{view,create,edit}
- *   assessee : claims.view
- *   standards_* : claims.view
+ *   assessor : claims.{view,view_all,create,edit}
+ *   assessee : claims.view (only claims scoped to their assessments; 404 otherwise)
+ *   standards_* : none (403)
  */
 
 interface ClaimCreate {
@@ -315,20 +315,23 @@ test.describe('Claim lifecycle @regression', () => {
       expect(r.status()).toBe(403);
     });
 
-    test('all roles can read a claim by id', async ({ apiAs }) => {
+    // Least privilege (01fb734, confirmed 2026-10-16): claims are readable
+    // org-wide by roles with claims.view_all, by participants of the
+    // claim's assessment, and by nobody else.
+    test('claim read access follows least privilege', async ({ apiAs }) => {
       const adminApi = await apiAs('admin');
       const claim = await createClaim(adminApi);
 
-      for (const role of [
-        'admin',
-        'assessor',
-        'assessee',
-        'standards_manager',
-        'standards_approver',
-      ] as const) {
-        const api = await apiAs(role);
-        const r = await api.get(`/api/v1/claims/${claim.id}`);
-        expect(r.ok(), `${role} could not read claim`).toBeTruthy();
+      for (const role of ['admin', 'assessor'] as const) {
+        const r = await (await apiAs(role)).get(`/api/v1/claims/${claim.id}`);
+        expect(r.ok(), `${role} should read the claim`).toBeTruthy();
+      }
+      // Not a participant in the claim's assessment.
+      const assessee = await (await apiAs('assessee')).get(`/api/v1/claims/${claim.id}`);
+      expect([403, 404], 'assessee outside the assessment').toContain(assessee.status());
+      for (const role of ['standards_manager', 'standards_approver'] as const) {
+        const r = await (await apiAs(role)).get(`/api/v1/claims/${claim.id}`);
+        expect(r.status(), `${role} has no claims.view`).toBe(403);
       }
     });
   });

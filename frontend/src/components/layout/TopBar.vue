@@ -129,7 +129,7 @@ import { useLogo } from '@/composables/useLogo'
 import { AVAILABLE_LOCALES, loadLocaleMessages } from '@/i18n'
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Sunny, Moon, CaretBottom, UserFilled, InfoFilled, Menu, Close, Bell } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 import { version } from '../../../package.json'
 
 const { logoSrc } = useLogo()
@@ -168,7 +168,7 @@ const handleUserCommand = (command: string) => {
 
 const fetchNotificationCount = async () => {
   try {
-    const response = await axios.get('/api/v1/notifications/count')
+    const response = await client.get('/notifications/count')
     notificationCount.value = response.data.count || 0
   } catch (error) {
     console.error('Failed to fetch notification count:', error)
@@ -177,7 +177,7 @@ const fetchNotificationCount = async () => {
 
 const fetchNotifications = async () => {
   try {
-    const response = await axios.get('/api/v1/notifications')
+    const response = await client.get('/notifications')
     notifications.value = Array.isArray(response.data) ? response.data : response.data.data || []
   } catch (error) {
     console.error('Failed to fetch notifications:', error)
@@ -203,7 +203,9 @@ const formatNotificationTime = (timestamp: string): string => {
 
 const handleNotificationClick = async (notification: Notification) => {
   try {
-    await axios.post(`/api/v1/notifications/${notification.id}/read`)
+    // The API defines PUT /notifications/:id/read and PUT /notifications/read-all;
+    // the POST paths used before were 404s.
+    await client.put(`/notifications/${encodeURIComponent(String(notification.id))}/read`)
     if (notification.link) {
       router.push(notification.link)
     }
@@ -217,7 +219,7 @@ const handleNotificationClick = async (notification: Notification) => {
 
 const handleMarkAllRead = async () => {
   try {
-    await axios.post('/api/v1/notifications/mark-all-read')
+    await client.put('/notifications/read-all')
     await fetchNotifications()
     await fetchNotificationCount()
   } catch (error) {

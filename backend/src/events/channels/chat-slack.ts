@@ -5,6 +5,7 @@
  * using Block Kit message format.
  */
 
+import { isPrivateOrReservedUrl } from '../../utils/url-safety.js';
 import type { EventEnvelope } from '../types.js';
 import { BaseChatChannel } from './chat-base.js';
 import { formatSlackMessage } from './chat-formatters.js';
@@ -21,6 +22,7 @@ export class SlackChannel extends BaseChatChannel {
    * Must start with https://hooks.slack.com/
    */
   static validateWebhookUrl(url: string): boolean {
-    return url.startsWith('https://hooks.slack.com/');
+    if (isPrivateOrReservedUrl(url)) return false;
+    return new URL(url).hostname.toLowerCase() === 'hooks.slack.com';
   }
 }

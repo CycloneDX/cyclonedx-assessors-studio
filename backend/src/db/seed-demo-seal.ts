@@ -42,6 +42,7 @@ import {
   buildSlotCanonicalPayload,
   buildDeclarationsSubtree,
   buildDocumentEnvelopePayload,
+  extractIdentityFromSignatureEnvelope,
   type AffirmationRow,
   type SlotRow,
   type StoredSignatoryIdentity,
@@ -221,6 +222,64 @@ function buildElectronicSlotEnvelope(args: {
   return { envelope, canonicalHash };
 }
 
+/** The envelope and JSF signer of a signed digital slot, or null. */
+function parseDigitalSlotEnvelope(signatureJson: unknown): {
+  envelope: Record<string, unknown>;
+  signature: { algorithm: string; publicKey?: unknown; value: string };
+} | null {
+  const envelope = (typeof signatureJson === 'string' ? JSON.parse(signatureJson) : signatureJson) as
+    | Record<string, unknown>
+    | null;
+  const signature = envelope?.signature as { algorithm?: unknown; publicKey?: unknown; value?: unknown } | undefined;
+  if (!envelope || typeof signature?.value !== 'string' || typeof signature.algorithm !== 'string') return null;
+  return { envelope, signature: signature as { algorithm: string; publicKey?: unknown; value: string } };
+}
+
+/**
+ * Seeds before the JSF provider fix stored a digital slot hash computed
+ * without the embedded public key, so verify reported the slot as
+ * drifted although its signature is valid. When the signature verifies,
+ * replace the stored hash with the one verify recomputes. A slot whose
+ * signature does not verify is left alone.
+ */
+async function repairDigitalSlotHash(
+  db: ReturnType<typeof getDatabase>,
+  affirmation: AffirmationRow,
+  slot: SlotRow,
+): Promise<void> {
+  const parsed = parseDigitalSlotEnvelope(slot.signature_json);
+  if (!parsed) return;
+  const { envelope, signature } = parsed;
+  const identity = extractIdentityFromSignatureEnvelope(envelope);
+  if (!identity) return;
+  const provider = getSignatureProviders().getDefault();
+  const { sha256Hex } = provider.canonicalize(
+    buildSlotCanonicalPayload({ affirmation, slot, identity }) as unknown as Parameters<typeof provider.canonicalize>[0],
+    {
+      algorithm: signature.algorithm,
+      ...(signature.publicKey ? { publicKey: signature.publicKey as Record<string, unknown> } : {}),
+    } as Parameters<typeof provider.canonicalize>[1],
+  );
+  if (sha256Hex === slot.canonical_hash) return;
+
+  const check = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
+    requireEmbeddedPublicKey: false,
+  });
+  if (!check.valid) {
+    logger.warn('Demo seal: digital slot hash differs and its signature does not verify; leaving it', {
+      slotId: slot.id,
+      reasons: check.reasons,
+    });
+    return;
+  }
+  await db
+    .updateTable('affirmation_signatory')
+    .set({ canonical_hash: sha256Hex, updated_at: new Date() })
+    .where('id', '=', slot.id)
+    .execute();
+  logger.info('Demo seal: repaired digital slot canonical hash', { slotId: slot.id });
+}
+
 export async function sealSsdfDemoAffirmation(): Promise<boolean> {
   const db = getDatabase();
   const adminUserId = await findAdminUserId();
@@ -342,6 +401,7 @@ export async function sealSsdfDemoAffirmation(): Promise<boolean> {
     logger.info('Demo seal: digital slot already signed, skipping', {
       slotId: firstSlot.id,
     });
+    await repairDigitalSlotHash(db, affirmation, firstSlot);
   }
 
   // --- Slot 1 (if present): electronic signature ---

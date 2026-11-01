@@ -13,6 +13,49 @@ export interface EmailTemplate {
 }
 
 // ---------------------------------------------------------------------------
+// HTML escaping
+// ---------------------------------------------------------------------------
+
+/**
+ * HTML that is already safe to insert as-is. Only htmlFragment creates it,
+ * so every SafeHtml was built with its own values escaped.
+ */
+class SafeHtml {
+  constructor(readonly value: string) {}
+  toString(): string {
+    return this.value;
+  }
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Tagged template for email HTML: every interpolated value is escaped
+ * unless it is a SafeHtml from another htmlFragment. Titles, evidence
+ * names and actor names are user-controlled and used to land in the HTML
+ * raw, so a crafted name became a phishing link from the trusted sender
+ * (security review X3).
+ */
+function htmlFragment(strings: TemplateStringsArray, ...values: unknown[]): SafeHtml {
+  let out = '';
+  strings.forEach((part, i) => {
+    out += part;
+    if (i < values.length) {
+      const v = values[i];
+      out += v instanceof SafeHtml ? v.value : escapeHtml(v);
+    }
+  });
+  return new SafeHtml(out);
+}
+
+// ---------------------------------------------------------------------------
 // Footer helpers
 // ---------------------------------------------------------------------------
 
@@ -27,12 +70,12 @@ Manage your notification preferences:
 ${settingsLink}`;
 }
 
-function getHtmlFooter(appUrl: string | undefined, reason: string): string {
+function getHtmlFooter(appUrl: string | undefined, reason: string): SafeHtml {
   const settingsLink = appUrl
     ? `${appUrl}/settings/notifications`
     : 'https://studio.example.com/settings/notifications';
 
-  return `<hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+  return htmlFragment`<hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
 <p style="font-size: 12px; color: #666; margin: 10px 0;">
   You received this email because ${reason}.<br/>
   <a href="${settingsLink}" style="color: #0066cc; text-decoration: none;">Manage your notification preferences</a>
@@ -47,8 +90,8 @@ function formatDate(): string {
   });
 }
 
-function actionButton(href: string, label: string): string {
-  return `<a href="${href}" style="display: inline-block; background-color: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">${label}</a>`;
+function actionButton(href: string, label: string): SafeHtml {
+  return htmlFragment`<a href="${href}" style="display: inline-block; background-color: #0066cc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;">${label}</a>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,16 +102,20 @@ export function assessmentCreatedTemplate(
   data: Record<string, unknown>,
   appUrl: string | undefined,
 ): EmailTemplate {
-  const { assessmentTitle, projectName, actorName } = data as {
+  const { assessmentId, assessmentTitle, projectName, actorName } = data as {
+    assessmentId?: string;
     assessmentTitle?: string;
-    projectName?: string;
+    projectName?: string | null;
     actorName?: string;
   };
 
-  const subject = `Assessment "${assessmentTitle}" created in "${projectName}"`;
-  const link = appUrl ? `${appUrl}/assessments` : 'https://studio.example.com/assessments';
+  // Assessments need not belong to a project.
+  const where = projectName ? ` in "${projectName}"` : '';
+  const subject = `Assessment "${assessmentTitle}" created${where}`;
+  const base = appUrl ?? 'https://studio.example.com';
+  const link = assessmentId ? `${base}/assessments/${assessmentId}` : `${base}/assessments`;
 
-  const text = `Assessment "${assessmentTitle}" has been created in project "${projectName}".
+  const text = `Assessment "${assessmentTitle}" has been created${projectName ? ` in project "${projectName}"` : ''}.
 
 Created by: ${actorName || 'Unknown'}
 Date: ${formatDate()}
@@ -76,9 +123,10 @@ Date: ${formatDate()}
 View this assessment:
 ${link}
 
-${getFooter(appUrl, 'you are a member of this project')}`;
+${getFooter(appUrl, 'you are assigned to this assessment')}`;
 
-  const html = `<p>Assessment <strong>"${assessmentTitle}"</strong> has been created in project <strong>"${projectName}"</strong>.</p>
+  const inProject = projectName ? htmlFragment` in project <strong>"${projectName}"</strong>` : '';
+  const html = htmlFragment`<p>Assessment <strong>"${assessmentTitle}"</strong> has been created${inProject}.</p>
 
 <p>
   <strong>Created by:</strong> ${actorName || 'Unknown'}<br/>
@@ -87,7 +135,7 @@ ${getFooter(appUrl, 'you are a member of this project')}`;
 
 <p>${actionButton(link, 'View this assessment')}</p>
 
-${getHtmlFooter(appUrl, 'you are a member of this project')}`;
+${getHtmlFooter(appUrl, 'you are assigned to this assessment')}`.value;
 
   return { subject, text, html };
 }
@@ -117,7 +165,7 @@ ${link}
 
 ${getFooter(appUrl, 'you are an assessor on this project')}`;
 
-  const html = `<p>Assessment <strong>"${assessmentTitle}"</strong> is ready for your review.</p>
+  const html = htmlFragment`<p>Assessment <strong>"${assessmentTitle}"</strong> is ready for your review.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -126,7 +174,7 @@ ${getFooter(appUrl, 'you are an assessor on this project')}`;
 
 <p>${actionButton(link, 'Review this assessment')}</p>
 
-${getHtmlFooter(appUrl, 'you are an assessor on this project')}`;
+${getHtmlFooter(appUrl, 'you are an assessor on this project')}`.value;
 
   return { subject, text, html };
 }
@@ -156,7 +204,7 @@ ${link}
 
 ${getFooter(appUrl, 'you are a member of this project')}`;
 
-  const html = `<p>Assessment <strong>"${assessmentTitle}"</strong> has been completed.</p>
+  const html = htmlFragment`<p>Assessment <strong>"${assessmentTitle}"</strong> has been completed.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -165,7 +213,7 @@ ${getFooter(appUrl, 'you are a member of this project')}`;
 
 <p>${actionButton(link, 'View this assessment')}</p>
 
-${getHtmlFooter(appUrl, 'you are a member of this project')}`;
+${getHtmlFooter(appUrl, 'you are a member of this project')}`.value;
 
   return { subject, text, html };
 }
@@ -195,7 +243,7 @@ ${link}
 
 ${getFooter(appUrl, 'you have been assigned to this assessment')}`;
 
-  const html = `<p>You have been assigned to assessment <strong>"${assessmentTitle}"</strong>.</p>
+  const html = htmlFragment`<p>You have been assigned to assessment <strong>"${assessmentTitle}"</strong>.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -204,7 +252,7 @@ ${getFooter(appUrl, 'you have been assigned to this assessment')}`;
 
 <p>${actionButton(link, 'View this assessment')}</p>
 
-${getHtmlFooter(appUrl, 'you have been assigned to this assessment')}`;
+${getHtmlFooter(appUrl, 'you have been assigned to this assessment')}`.value;
 
   return { subject, text, html };
 }
@@ -240,7 +288,7 @@ ${link}
 
 ${getFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`;
 
-  const html = `<p>Evidence <strong>"${evidenceName}"</strong> has been submitted for your review.</p>
+  const html = htmlFragment`<p>Evidence <strong>"${evidenceName}"</strong> has been submitted for your review.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -250,7 +298,7 @@ ${getFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`;
 
 <p>${actionButton(link, 'View this evidence')}</p>
 
-${getHtmlFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`;
+${getHtmlFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`.value;
 
   return { subject, text, html };
 }
@@ -282,7 +330,7 @@ ${link}
 
 ${getFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`;
 
-  const html = `<p>Evidence <strong>"${evidenceName}"</strong> is ready for your review.</p>
+  const html = htmlFragment`<p>Evidence <strong>"${evidenceName}"</strong> is ready for your review.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -292,7 +340,7 @@ ${getFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`;
 
 <p>${actionButton(link, 'View this evidence')}</p>
 
-${getHtmlFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`;
+${getHtmlFooter(appUrl, 'you are assigned as the reviewer for this evidence')}`.value;
 
   return { subject, text, html };
 }
@@ -322,7 +370,7 @@ ${link}
 
 ${getFooter(appUrl, 'you submitted this evidence')}`;
 
-  const html = `<p>Your evidence <strong>"${evidenceName}"</strong> has been approved.</p>
+  const html = htmlFragment`<p>Your evidence <strong>"${evidenceName}"</strong> has been approved.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -331,7 +379,7 @@ ${getFooter(appUrl, 'you submitted this evidence')}`;
 
 <p>${actionButton(link, 'View this evidence')}</p>
 
-${getHtmlFooter(appUrl, 'you submitted this evidence')}`;
+${getHtmlFooter(appUrl, 'you submitted this evidence')}`.value;
 
   return { subject, text, html };
 }
@@ -363,18 +411,18 @@ ${link}
 
 ${getFooter(appUrl, 'you submitted this evidence')}`;
 
-  const html = `<p>Your evidence <strong>"${evidenceName}"</strong> needs revision.</p>
+  const html = htmlFragment`<p>Your evidence <strong>"${evidenceName}"</strong> needs revision.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
   <strong>Date:</strong> ${formatDate()}
 </p>
 
-${rejectionReason ? `<p><strong>Feedback:</strong> ${rejectionReason}</p>` : ''}
+${rejectionReason ? htmlFragment`<p><strong>Feedback:</strong> ${rejectionReason}</p>` : ''}
 
 <p>${actionButton(link, 'View this evidence')}</p>
 
-${getHtmlFooter(appUrl, 'you submitted this evidence')}`;
+${getHtmlFooter(appUrl, 'you submitted this evidence')}`.value;
 
   return { subject, text, html };
 }
@@ -407,7 +455,7 @@ ${link}
 
 ${getFooter(appUrl, 'you have been assigned as a signatory for this attestation')}`;
 
-  const html = `<p>An attestation requires your signature.</p>
+  const html = htmlFragment`<p>An attestation requires your signature.</p>
 
 <p>
   <strong>Project:</strong> ${projectName || 'Unknown'}<br/>
@@ -416,7 +464,7 @@ ${getFooter(appUrl, 'you have been assigned as a signatory for this attestation'
 
 <p>${actionButton(link, 'Sign this attestation')}</p>
 
-${getHtmlFooter(appUrl, 'you have been assigned as a signatory for this attestation')}`;
+${getHtmlFooter(appUrl, 'you have been assigned as a signatory for this attestation')}`.value;
 
   return { subject, text, html };
 }
@@ -448,7 +496,7 @@ ${link}
 
 ${getFooter(appUrl, 'you are an administrator')}`;
 
-  const html = `<p>Webhook <strong>"${webhookName}"</strong> has been automatically disabled due to consecutive delivery failures (${consecutiveFailures} failures).</p>
+  const html = htmlFragment`<p>Webhook <strong>"${webhookName}"</strong> has been automatically disabled due to consecutive delivery failures (${consecutiveFailures} failures).</p>
 
 <p>
   <strong>Date:</strong> ${formatDate()}
@@ -456,7 +504,37 @@ ${getFooter(appUrl, 'you are an administrator')}`;
 
 <p>${actionButton(link, 'Manage your webhooks')}</p>
 
-${getHtmlFooter(appUrl, 'you are an administrator')}`;
+${getHtmlFooter(appUrl, 'you are an administrator')}`.value;
+
+  return { subject, text, html };
+}
+
+// ---------------------------------------------------------------------------
+// Account security
+// ---------------------------------------------------------------------------
+
+/**
+ * Password reset link. Sent whatever the user's notification preferences
+ * are, so it has no preferences footer.
+ */
+export function passwordResetTemplate(data: { resetUrl: string; expiresInMinutes: number }): EmailTemplate {
+  const { resetUrl, expiresInMinutes } = data;
+  const subject = 'Reset your Assessors Studio password';
+
+  const text = `Someone asked to reset the password for your Assessors Studio account.
+
+To choose a new password, open this link within ${expiresInMinutes} minutes:
+${resetUrl}
+
+The link works once. If you did not ask for this, ignore this email: your password stays the same.`;
+
+  const html = htmlFragment`<p>Someone asked to reset the password for your Assessors Studio account.</p>
+
+<p>${actionButton(resetUrl, 'Choose a new password')}</p>
+
+<p style="font-size: 13px; color: #444;">The link expires in ${expiresInMinutes} minutes and works once. If the button does not work, copy this address into your browser:<br/>${resetUrl}</p>
+
+<p style="font-size: 13px; color: #444;">If you did not ask for this, ignore this email: your password stays the same.</p>`.value;
 
   return { subject, text, html };
 }

@@ -63,6 +63,21 @@ describe('seedDemoData loads demo-data.json without FK violations', () => {
     }
     expect(seeded).toBe(true);
 
+    // The sealed demo affirmation verifies on every layer: each slot,
+    // the declarations seal and the document seal. The digital slot used
+    // to report "canonical payload has drifted since signing" because the
+    // JSF provider returned a hash without the embedded public key.
+    const affirmationId = '00000000-0000-4000-b300-000000000002';
+    const { verifyAffirmation } = await import('../../routes/affirmations.js');
+    const verifyDemo = async () =>
+      verifyAffirmation(
+        db,
+        (await db.selectFrom('affirmation').where('id', '=', affirmationId).selectAll().executeTakeFirstOrThrow()) as never,
+      );
+    const fresh = await verifyDemo();
+    expect(fresh.issues).toEqual([]);
+    expect(fresh.verified).toBe(true);
+
     // Idempotency: a second call on the same database is a no-op and
     // returns false (guarded by the "entities already exist" check
     // at the top of seedDemoData). The seal step still runs as a
@@ -71,12 +86,36 @@ describe('seedDemoData loads demo-data.json without FK violations', () => {
     const again = await seedDemoData();
     expect(again).toBe(false);
 
+    // Databases seeded before the provider fix carry the stale digital
+    // slot hash. The repair pass replaces it because the signature
+    // itself is valid.
+    const [digitalSlot] = await db
+      .selectFrom('affirmation_signatory')
+      .where('affirmation_id', '=', affirmationId)
+      .select(['id', 'canonical_hash'])
+      .orderBy('created_at', 'asc')
+      .execute();
+    const goodHash = digitalSlot.canonical_hash;
+    await db
+      .updateTable('affirmation_signatory')
+      .set({ canonical_hash: 'f'.repeat(64) })
+      .where('id', '=', digitalSlot.id)
+      .execute();
+    expect((await verifyDemo()).verified).toBe(false);
+    await seedDemoData();
+    const repairedHash = await db
+      .selectFrom('affirmation_signatory')
+      .where('id', '=', digitalSlot.id)
+      .select('canonical_hash')
+      .executeTakeFirstOrThrow();
+    expect(repairedHash.canonical_hash).toBe(goodHash);
+    expect((await verifyDemo()).verified).toBe(true);
+
     // Repair-pass regression guard: simulate the pre-fix state
     // where the data seed ran but the seal failed, leaving slot
     // signatures absent and the affirmation unsealed. Then call
     // seedDemoData again and assert the seal step completes the
     // missing work in place, without a DB wipe.
-    const affirmationId = '00000000-0000-4000-b300-000000000002';
     await db
       .updateTable('affirmation_signatory')
       .set({
@@ -131,6 +170,7 @@ describe('seedDemoData loads demo-data.json without FK violations', () => {
     for (const slot of repairedSlots) {
       expect(slot.signature_json).not.toBeNull();
     }
+    expect((await verifyDemo()).verified).toBe(true);
 
     // Sanity checks: at least some core rows should have landed.
     const { count: assessmentCount } = (await db

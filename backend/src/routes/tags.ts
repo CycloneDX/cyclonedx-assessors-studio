@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { queryString } from '../utils/query.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
@@ -30,16 +31,50 @@ function normalizeTagName(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-// List all tags
+// List all tags with usage counts across all junction tables
 router.get('/', requireAuth, asyncHandler(async (_req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
   const tags = await db.selectFrom('tag').selectAll().orderBy('name', 'asc').execute();
-  res.json({ data: tags });
+  if (tags.length === 0) {
+    res.json({ data: [] });
+    return;
+  }
+
+  const tagIds = tags.map(t => t.id);
+  // Each junction is counted through an inner join to its parent. The parent
+  // names (assessment, evidence, entity) are soft-delete views, so tags on a
+  // soft-deleted parent are excluded from the usage count automatically; a
+  // trashed assessment no longer inflates its tags' counts. project is not
+  // soft-deletable, so the join there is a plain existence check.
+  const junctions = [
+    { table: 'assessment_tag', col: 'assessment_id', parent: 'assessment' },
+    { table: 'evidence_tag', col: 'evidence_id', parent: 'evidence' },
+    { table: 'project_tag', col: 'project_id', parent: 'project' },
+    { table: 'entity_tag', col: 'entity_id', parent: 'entity' },
+  ] as const;
+
+  const usageMap = new Map<string, number>(tagIds.map(id => [id, 0]));
+  for (const { table, col, parent } of junctions) {
+    const rows = await (db
+      // biome-ignore lint/suspicious/noExplicitAny: dynamic junction table
+      .selectFrom(table as any) as any)
+      .innerJoin(parent, `${parent}.id`, `${table}.${col}`)
+      .where(`${table}.tag_id`, 'in', tagIds)
+      .select([`${table}.tag_id as tag_id`, db.fn.count<number>(`${table}.tag_id`).as('cnt')])
+      .groupBy(`${table}.tag_id`)
+      .execute() as { tag_id: string; cnt: number }[];
+    for (const row of rows) {
+      usageMap.set(row.tag_id, (usageMap.get(row.tag_id) ?? 0) + Number(row.cnt));
+    }
+  }
+
+  const enriched = tags.map(t => ({ ...t, usageCount: usageMap.get(t.id) ?? 0 }));
+  res.json({ data: enriched });
 }));
 
 // Tag autocomplete
 router.get('/autocomplete', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
-  const query = (req.query.q as string) || '';
+  const query = ((queryString(req.query.q) ?? '')) || '';
   const db = getDatabase();
 
   const tags = await db

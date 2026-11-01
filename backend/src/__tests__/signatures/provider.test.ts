@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   generateKeyPairSync,
+  verify,
   type KeyObject,
 } from 'node:crypto';
 
@@ -84,6 +85,34 @@ describe('JsfSignatureProvider', () => {
     expect(verifyResult.valid).toBe(true);
     expect(verifyResult.algorithm).toBe('ES256');
     expect(verifyResult.reasons).toEqual([]);
+  });
+
+  it('returns the canonical bytes the signature covers, embedded public key included', async () => {
+    const { privateKey, publicKey } = ecPair();
+    const signResult = await provider.sign(samplePayload(), {
+      algorithm: 'ES256',
+      privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      publicKey: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+    });
+    const embedded = (signResult.envelope.signature as Record<string, unknown>).publicKey;
+    expect(embedded).toBeDefined();
+
+    // JWS ES256 signatures are raw r||s, not DER.
+    const signed = verify(
+      'sha256',
+      signResult.canonicalBytes,
+      { key: publicKey, dsaEncoding: 'ieee-p1363' },
+      Buffer.from(signResult.signatureValue, 'base64url'),
+    );
+    expect(signed).toBe(true);
+
+    // The hash a verifier recomputes from the envelope (affirmation slot
+    // drift check) must equal the one sign() reported.
+    const recomputed = provider.canonicalize(samplePayload(), {
+      algorithm: 'ES256',
+      publicKey: embedded as Parameters<typeof provider.canonicalize>[1]['publicKey'],
+    });
+    expect(signResult.canonicalHashSha256).toBe(recomputed.sha256Hex);
   });
 
   it('rejects unsupported algorithms at sign time', async () => {

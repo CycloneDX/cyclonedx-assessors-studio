@@ -34,6 +34,38 @@ export const USER_PROFILE_COLUMNS = [
 ] as const;
 
 /**
+ * Fields safe to expose to a programmatic (API key) caller enumerating
+ * the user directory. Excludes PII and contact identifiers — email, last
+ * login, chat handles, notification preferences — that are only
+ * appropriate for an interactive admin session. Operates on raw
+ * snake_case rows before the camelCase response transform runs.
+ */
+const API_KEY_SAFE_USER_KEYS = new Set<string>([
+  'id',
+  'username',
+  'display_name',
+  'role',
+  'is_active',
+  'has_completed_onboarding',
+  'created_at',
+]);
+
+/**
+ * Strip a user row down to the non-sensitive directory fields for
+ * programmatic callers. Session callers see the full profile; API keys
+ * see only what a directory listing needs, closing the recon vector
+ * where a leaked admin key could harvest every user's email and
+ * last-login timestamp.
+ */
+export function redactUserForApiKey<T extends Record<string, unknown>>(user: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(user)) {
+    if (API_KEY_SAFE_USER_KEYS.has(key)) out[key] = value;
+  }
+  return out as Partial<T>;
+}
+
+/**
  * Fetch a user by ID with all standard profile fields.
  */
 export async function fetchUserById(db: Kysely<Database>, userId: string) {
@@ -51,17 +83,6 @@ export async function fetchUserByUsername(db: Kysely<Database>, username: string
   return db
     .selectFrom('app_user')
     .where('username', '=', username)
-    .selectAll()
-    .executeTakeFirst();
-}
-
-/**
- * Fetch a user by email.
- */
-export async function fetchUserByEmail(db: Kysely<Database>, email: string) {
-  return db
-    .selectFrom('app_user')
-    .where('email', '=', email)
     .selectAll()
     .executeTakeFirst();
 }

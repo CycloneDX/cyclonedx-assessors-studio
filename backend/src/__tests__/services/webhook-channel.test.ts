@@ -5,7 +5,22 @@
  * wildcard subscriptions, and delivery cleanup.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+
+// Hermetic delivery: these tests used to make live requests to httpbin.org
+// and example.com. Keep the same outcomes without the network.
+vi.mock('../../utils/safe-fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/safe-fetch.js')>();
+  return {
+    ...actual,
+    safeFetch: vi.fn(async (url: string) => {
+      const host = new URL(url).hostname;
+      if (host === 'httpbin.org') return { status: 200, ok: true, text: '', truncated: false };
+      if (host === 'example.com') return { status: 404, ok: false, text: '', truncated: false };
+      throw new actual.UnsafeUrlError('Target address is private or reserved');
+    }),
+  };
+});
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { computeSignature, WebhookChannel } from '../../events/webhook-channel.js';

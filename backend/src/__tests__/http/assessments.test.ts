@@ -1945,11 +1945,13 @@ describe('Assessments HTTP Routes', () => {
     it('view-only caller is 403\'d on detail for an assessment they are not a participant on', async () => {
       const adminAgent = await loginAs('admin');
       const { assessmentId } = await createFullAssessment(adminAgent);
-      // assessor holds assessments.view but NOT assessments.view_all and
+      // assessee holds assessments.view but NOT assessments.view_all and
       // is not assigned to this assessment, so the per-row authorizer
-      // refuses with reason 'not_a_participant'.
-      const assessorAgent = await loginAs('assessor');
-      const res = await assessorAgent.get(`/api/v1/assessments/${assessmentId}`);
+      // refuses with reason 'not_a_participant'. (Assessors hold view_all
+      // in this RBAC — covered by the view_all test above — so the genuine
+      // view-only, per-row-gated role is the assessee.)
+      const assesseeAgent = await loginAs('assessee');
+      const res = await assesseeAgent.get(`/api/v1/assessments/${assessmentId}`);
       expect(res.status).toBe(403);
       expect(res.body.reason).toBe('not_a_participant');
     });
@@ -1986,13 +1988,14 @@ describe('Assessments HTTP Routes', () => {
       const adminAgent = await loginAs('admin');
       const { getDatabase } = await import('../../db/connection.js');
       const db = getDatabase();
-      const assessorUser = await db
+      const assesseeUser = await db
         .selectFrom('app_user')
-        .where('role', '=', 'assessor')
+        .where('role', '=', 'assessee')
         .select('id')
         .executeTakeFirstOrThrow();
 
-      // Two assessments: one the assessor is assigned to, one they are not.
+      // Two assessments: one the assessee is assigned to, one they are not.
+      // (assessee is view-only — no view_all — so the list must row-scope.)
       const stdRes = await adminAgent.post('/api/v1/standards').send({
         identifier: `STD-view-list-${Date.now()}`,
         name: 'View list test',
@@ -2005,7 +2008,7 @@ describe('Assessments HTTP Routes', () => {
       const own = await adminAgent.post('/api/v1/assessments').send({
         title: ownTag,
         standardId,
-        assessorIds: [assessorUser.id],
+        assesseeIds: [assesseeUser.id],
       });
       const other = await adminAgent.post('/api/v1/assessments').send({
         title: otherTag,
@@ -2014,8 +2017,8 @@ describe('Assessments HTTP Routes', () => {
       expect(own.status).toBe(201);
       expect(other.status).toBe(201);
 
-      const assessorAgent = await loginAs('assessor');
-      const res = await assessorAgent.get('/api/v1/assessments?limit=100');
+      const assesseeAgent = await loginAs('assessee');
+      const res = await assesseeAgent.get('/api/v1/assessments?limit=100');
       expect(res.status).toBe(200);
       const titles = res.body.data.map((a: { title: string }) => a.title);
       expect(titles).toContain(ownTag);
@@ -2025,10 +2028,10 @@ describe('Assessments HTTP Routes', () => {
     it('per-row gate applies to /:id/evidence, /:id/claims, /:id/notes, /:id/participants', async () => {
       const adminAgent = await loginAs('admin');
       const { assessmentId } = await createFullAssessment(adminAgent);
-      const assessorAgent = await loginAs('assessor');
+      const assesseeAgent = await loginAs('assessee');
 
       for (const path of ['evidence', 'claims', 'notes', 'participants']) {
-        const res = await assessorAgent.get(`/api/v1/assessments/${assessmentId}/${path}`);
+        const res = await assesseeAgent.get(`/api/v1/assessments/${assessmentId}/${path}`);
         expect(res.status, `GET /${path} should 403 for non-participant`).toBe(403);
         expect(res.body.reason).toBe('not_a_participant');
       }

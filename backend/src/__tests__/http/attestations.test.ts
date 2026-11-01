@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import {
   setupHttpTests,
   loginAs,
+  testUsers,
   forceAssessmentStateForTests,
 } from '../helpers/http.js';
 
@@ -756,10 +757,16 @@ describe('Attestations HTTP Routes', () => {
   // coverage.
 
   describe('Edge cases and role-based access', () => {
-    it('should allow assessor to create attestations', async () => {
+    it('should allow an assigned assessor to create attestations', async () => {
       // Admin creates test data (standards require admin/standards_manager role)
       const adminAgent = await loginAs('admin');
       const { assessmentId } = await createTestData(adminAgent);
+      // Writes need assignment, not just assessments.view_all (security review Z8).
+      const { getDatabase } = await import('../../db/connection.js');
+      await getDatabase().insertInto('assessment_assessor')
+        .values({ assessment_id: assessmentId, user_id: testUsers.assessor.id, created_at: new Date() })
+        .onConflict((oc) => oc.doNothing())
+        .execute();
 
       // Assessor creates the attestation
       const assessorAgent = await loginAs('assessor');
@@ -772,6 +779,16 @@ describe('Attestations HTTP Routes', () => {
 
       expect(res.status).toBe(201);
       expect(res.body.id).toBeDefined();
+    });
+
+    it('should reject an unassigned assessor creating attestations (Z8)', async () => {
+      const adminAgent = await loginAs('admin');
+      const { assessmentId } = await createTestData(adminAgent);
+      const assessorAgent = await loginAs('assessor');
+      const res = await assessorAgent
+        .post('/api/v1/attestations')
+        .send({ assessmentId, summary: 'Not assigned' });
+      expect(res.status).toBe(403);
     });
 
     it('should reject assessee trying to create attestations', async () => {

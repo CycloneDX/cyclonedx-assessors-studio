@@ -8,14 +8,16 @@
  * verified by fingerprint.
  */
 
+import { auditMutations } from '../utils/audit.js';
 import { Router, type Response } from 'express';
 import { z } from 'zod';
-import { requireAuth, requirePermission, type AuthRequest } from '../middleware/auth.js';
+import { requireAuth, requirePermission, type AuthRequest, requireSession } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/route-helpers.js';
 import { listKeys, rotateKey, getActiveKey } from '../services/platform-keys.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
+router.use(auditMutations('platform_signing_key'));
 
 const rotateSchema = z.object({
   algorithm: z
@@ -63,7 +65,7 @@ router.get(
  */
 router.post(
   '/rotate',
-  requireAuth,
+  requireSession,
   requirePermission('platform_keys.rotate'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const userId = req.user?.id;

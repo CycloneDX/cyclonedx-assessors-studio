@@ -11,6 +11,10 @@
         </div>
       </div>
 
+      <el-alert v-if="resetDone" type="success" :closable="false" show-icon class="login-error" role="status">
+        {{ t('login.resetDone') }}
+      </el-alert>
+
       <form @submit.prevent="handleLogin" class="login-form" aria-label="Sign in form">
         <el-form-item>
           <label for="login-username" class="login-form-label">{{ t('login.username') }}</label>
@@ -58,6 +62,10 @@
         >
           {{ t('login.signIn') }}
         </el-button>
+
+        <div class="login-forgot">
+          <router-link to="/forgot-password">{{ t('login.forgotPassword') }}</router-link>
+        </div>
       </form>
 
       <div class="login-footer">
@@ -103,7 +111,7 @@ const form = ref({
 
 const loading = ref(false)
 const error = ref('')
-const usernameInputRef = ref()
+const resetDone = route.query.reset === '1'
 
 onMounted(() => {
   nextTick(() => {
@@ -241,6 +249,12 @@ const handleLogin = async () => {
   font-weight: 500;
   border-radius: 8px;
   margin-top: 8px;
+}
+
+.login-forgot {
+  text-align: center;
+  margin-top: 12px;
+  font-size: 13px;
 }
 
 .login-footer {

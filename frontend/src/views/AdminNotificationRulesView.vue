@@ -34,7 +34,7 @@
             <template #default="{ row }">
               <div class="event-types-cell">
                 <el-tag
-                  v-for="(eventType, index) in (row.eventTypes || row.event_types || []).slice(0, 3)"
+                  v-for="eventType in (row.eventTypes || row.event_types || []).slice(0, 3)"
                   :key="eventType"
                   size="small"
                   class="mr-2 mb-2"
@@ -207,7 +207,7 @@ import {
   Edit as EditIcon,
   Delete,
 } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import IconButton from '@/components/shared/IconButton.vue'
 import SearchSelect from '@/components/shared/SearchSelect.vue'
@@ -339,7 +339,7 @@ const fetchRules = async () => {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await axios.get('/api/v1/admin/notification-rules')
+    const { data } = await client.get('/admin/notification-rules')
     const rawRules = data.rules || data
     // Normalize JSON string fields from DB
     rules.value = rawRules.map((rule: Record<string, unknown>) => {
@@ -367,7 +367,7 @@ const fetchRules = async () => {
 const fetchChatIntegrations = async () => {
   chatIntegrationsLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/integrations/chat')
+    const { data } = await client.get('/integrations/chat')
     chatIntegrations.value = data.integrations || data
   } catch (err: unknown) {
     ElMessage.error('Failed to load chat integrations')
@@ -379,7 +379,7 @@ const fetchChatIntegrations = async () => {
 const fetchWebhooks = async () => {
   webhooksLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/webhooks')
+    const { data } = await client.get('/webhooks')
     webhooks.value = data.webhooks || data
   } catch (err: unknown) {
     ElMessage.error('Failed to load webhooks')
@@ -391,7 +391,7 @@ const fetchWebhooks = async () => {
 const fetchProjectOptions = async () => {
   projectsLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/projects', {
+    const { data } = await client.get('/projects', {
       params: { limit: 100 }
     })
     projectOptions.value = (data.data || []).map((project: Record<string, unknown>) => ({
@@ -408,7 +408,7 @@ const fetchProjectOptions = async () => {
 const fetchStandardOptions = async () => {
   standardsLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/standards', {
+    const { data } = await client.get('/standards', {
       params: { limit: 100 }
     })
     standardOptions.value = (data.data || []).map((standard: Record<string, unknown>) => ({
@@ -507,10 +507,10 @@ const handleSave = async () => {
     }
 
     if (isEditing.value && editingId.value) {
-      await axios.put(`/api/v1/admin/notification-rules/${editingId.value}`, payload)
+      await client.put(`/admin/notification-rules/${editingId.value}`, payload)
       ElMessage.success(t('notificationRules.ruleSaved'))
     } else {
-      await axios.post('/api/v1/admin/notification-rules', payload)
+      await client.post('/admin/notification-rules', payload)
       ElMessage.success(t('notificationRules.ruleCreated'))
     }
 
@@ -526,7 +526,7 @@ const handleSave = async () => {
 
 const handleToggleEnabled = async (rule: NotificationRule) => {
   try {
-    await axios.patch(`/api/v1/admin/notification-rules/${rule.id}`, {
+    await client.patch(`/admin/notification-rules/${rule.id}`, {
       enabled: rule.enabled
     })
   } catch (err: unknown) {
@@ -543,7 +543,7 @@ const handleDelete = async (rule: NotificationRule) => {
       t('notificationRules.deleteTitle'),
       { confirmButtonText: t('common.delete'), cancelButtonText: t('common.cancel'), type: 'warning' }
     )
-    await axios.delete(`/api/v1/admin/notification-rules/${rule.id}`)
+    await client.delete(`/admin/notification-rules/${rule.id}`)
     ElMessage.success(t('notificationRules.ruleDeleted'))
     await fetchRules()
   } catch (err: unknown) {

@@ -152,6 +152,19 @@ SMTP_TLS_REJECT_UNAUTHORIZED=true</pre>
                 </div>
               </div>
 
+              <div class="integration-card-actions">
+                <el-button
+                  type="primary"
+                  :loading="testingStorage"
+                  @click="testStorage"
+                >
+                  {{ t('integrations.storage.testConnection') }}
+                </el-button>
+                <span v-if="storageTestResult" class="test-result" :class="storageTestResult.success ? 'test-result--success' : 'test-result--error'">
+                  {{ storageTestResult.message }}
+                </span>
+              </div>
+
               <template v-if="status.storage?.provider !== 's3'">
                 <el-collapse>
                   <el-collapse-item :title="t('integrations.storage.setupGuide')">
@@ -274,7 +287,7 @@ METRICS_DOMAIN_REFRESH_INTERVAL=60  # Seconds</pre>
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import client from '@/api/client'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import AdminWebhooksView from '@/views/AdminWebhooksView.vue'
 import AdminChatIntegrationsView from '@/views/AdminChatIntegrationsView.vue'
@@ -291,6 +304,8 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const testingSmtp = ref(false)
 const smtpTestResult = ref<{ success: boolean; message: string } | null>(null)
+const testingStorage = ref(false)
+const storageTestResult = ref<{ success: boolean; message: string } | null>(null)
 
 interface IntegrationStatus {
   storage: {
@@ -343,7 +358,7 @@ async function fetchStatus() {
   loading.value = true
   error.value = null
   try {
-    const { data } = await axios.get('/api/v1/admin/integrations/status')
+    const { data } = await client.get('/admin/integrations/status')
     status.value = data
   } catch (err: unknown) {
     // biome-ignore lint/suspicious/noExplicitAny: axios error handling
@@ -358,7 +373,7 @@ async function testSmtp() {
   testingSmtp.value = true
   smtpTestResult.value = null
   try {
-    const { data } = await axios.post('/api/v1/admin/integrations/test/smtp')
+    const { data } = await client.post('/admin/integrations/test/smtp')
     smtpTestResult.value = { success: true, message: data.message }
   } catch (err: unknown) {
     smtpTestResult.value = {
@@ -367,6 +382,22 @@ async function testSmtp() {
     }
   } finally {
     testingSmtp.value = false
+  }
+}
+
+async function testStorage() {
+  testingStorage.value = true
+  storageTestResult.value = null
+  try {
+    const { data } = await client.post('/admin/integrations/test/storage')
+    storageTestResult.value = { success: true, message: data.message }
+  } catch (err: unknown) {
+    storageTestResult.value = {
+      success: false,
+      message: apiErrorMessage(err, 'Storage test failed'),
+    }
+  } finally {
+    testingStorage.value = false
   }
 }
 

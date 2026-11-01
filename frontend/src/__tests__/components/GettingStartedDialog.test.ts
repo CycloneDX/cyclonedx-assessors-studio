@@ -256,7 +256,7 @@ describe('GettingStartedDialog.vue', () => {
       await wrapper.vm.handleDismiss()
       await flushPromises()
 
-      expect(axios.post).toHaveBeenCalledWith('/api/v1/auth/complete-onboarding')
+      expect(axios.post).toHaveBeenCalledWith('/auth/complete-onboarding')
     })
 
     it('should handle API errors gracefully', async () => {

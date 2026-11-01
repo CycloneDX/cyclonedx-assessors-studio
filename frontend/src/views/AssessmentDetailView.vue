@@ -40,6 +40,8 @@
                 </template>
                 <span v-if="projectName || entityName || standardName" class="meta-sep">•</span>
                 <StateBadge :state="assessment.state" />
+                <el-tag v-if="assessment.assessmentType === 'targeted'" size="small" type="warning" style="margin-left: 6px;">Targeted</el-tag>
+                <el-tag v-if="assessment.assessmentType === 'tasks'" size="small" type="info" style="margin-left: 6px;">Task{{ assessment.taskLabel ? ' — ' + assessment.taskLabel : '' }}</el-tag>
               </p>
               <p v-if="assessment.description" class="info-description">{{ assessment.description }}</p>
             </div>
@@ -154,7 +156,7 @@
                 Assessment started. {{ startBanner.count }} requirement(s) have been loaded from your linked standards. Begin evaluating each requirement below.
               </template>
             </el-alert>
-            <div v-if="completionErrors.unassessedCount > 0 || completionErrors.missingRationaleCount > 0" class="completion-error-banner">
+            <div v-if="completionErrors.unassessedCount > 0 || completionErrors.missingRationaleCount > 0 || completionErrors.openClaims.length > 0 || completionErrors.openMitigations.length > 0" class="completion-error-banner">
               <div class="error-banner-header">
                 <span class="error-icon">!</span>
                 <span class="error-title">Unable to Complete Assessment</span>
@@ -166,94 +168,146 @@
                 <p v-if="completionErrors.missingRationaleCount > 0">
                   {{ completionErrors.missingRationaleCount }} requirement(s) are missing a rationale.
                 </p>
+                <p v-if="completionErrors.openClaims.length > 0">
+                  {{ completionErrors.openClaims.length }} linked claim(s) must be <strong>Accepted</strong> or <strong>Rejected</strong> before closing:
+                  <span class="error-item-list">{{ completionErrors.openClaims.join(', ') }}</span>
+                </p>
+                <p v-if="completionErrors.openMitigations.length > 0">
+                  {{ completionErrors.openMitigations.length }} linked mitigation(s) must be <strong>Verified</strong> or <strong>Closed</strong> before closing:
+                  <span class="error-item-list">{{ completionErrors.openMitigations.join(', ') }}</span>
+                </p>
               </div>
             </div>
             <div v-if="isLoadingRequirements" class="loading-state">
               <el-skeleton :rows="3" animated />
             </div>
+            <div v-else-if="requirements.length === 0 && assessment?.assessmentType === 'tasks'" class="empty-state task-empty-state">
+              <div class="task-empty-icon">✅</div>
+              <p class="task-empty-title">Task Assessment — <strong>{{ assessment.taskLabel || 'No Label' }}</strong></p>
+              <p class="task-empty-desc">This assessment has no requirements. Use <strong>Work Notes</strong> to track progress and <strong>Evidence</strong> to capture artifacts.</p>
+            </div>
             <div v-else-if="requirements.length === 0" class="empty-state">
               <p>{{ t('common.noData') }}</p>
             </div>
             <div v-else>
-              <div class="assessment-progress" v-if="requirements.length > 0">
+              <!-- Progress bar + result pills -->
+              <div class="assessment-progress">
                 <div class="progress-stats">
                   <span>{{ assessedCount }} of {{ requirements.length }} requirements assessed</span>
                   <span class="progress-percentage">{{ Math.round((assessedCount / requirements.length) * 100) }}%</span>
                 </div>
                 <el-progress :percentage="Math.round((assessedCount / requirements.length) * 100)" :stroke-width="8" :show-text="false" :status="getProgressStatus(Math.round((assessedCount / requirements.length) * 100))" />
                 <div class="progress-breakdown">
-                  <span class="result-yes">{{ resultCounts.yes }} Yes</span>
-                  <span class="result-no">{{ resultCounts.no }} No</span>
-                  <span class="result-partial">{{ resultCounts.partial }} Partial</span>
-                  <span class="result-na">{{ resultCounts.not_applicable }} N/A</span>
-                  <span class="result-remaining">{{ resultCounts.remaining }} Remaining</span>
+                  <span class="result-pill result-yes">{{ resultCounts.yes }} Yes</span>
+                  <span class="result-pill result-no">{{ resultCounts.no }} No</span>
+                  <span class="result-pill result-partial">{{ resultCounts.partial }} Partial</span>
+                  <span class="result-pill result-na">{{ resultCounts.not_applicable }} N/A</span>
+                  <span class="result-pill result-remaining">{{ resultCounts.remaining }} Remaining</span>
+                  <div style="flex:1" />
+                  <el-select v-model="practiceFilter" size="small" style="width:220px" placeholder="All Practices" clearable>
+                    <el-option label="All Practices" value="" />
+                    <el-option-group v-for="dg in allDomainGroups" :key="dg.domain" :label="dg.domain">
+                      <el-option v-for="pg in dg.practices" :key="pg.practice" :label="pg.practice" :value="pg.practice" />
+                    </el-option-group>
+                  </el-select>
                 </div>
               </div>
-              <el-table :data="requirements" border>
-              <el-table-column prop="identifier" :label="t('common.id')" min-width="120" sortable></el-table-column>
-              <el-table-column :label="t('common.name')" min-width="250">
-                <template #default="{ row }">
-                  {{ row.title || row.name }}
-                </template>
-              </el-table-column>
-              <el-table-column :label="t('assessments.result')" min-width="130">
-                <template #default="{ row }">
-                  <el-select v-model="row.result" size="small" placeholder="Select" class="w-full" :disabled="isReadOnly" @change="handleResultChange(row)">
-                    <el-option :label="t('common.yes')" value="yes"></el-option>
-                    <el-option :label="t('common.no')" value="no"></el-option>
-                    <el-option label="Partial" value="partial"></el-option>
-                    <el-option :label="t('common.na')" value="not_applicable"></el-option>
-                  </el-select>
-                </template>
-              </el-table-column>
-              <el-table-column min-width="250">
-                <template #header>
-                  <span>{{ t('common.rationale') }} <HelpTip content="A written explanation of how the requirement is implemented for this specific assessment. Minimum 15 words required." /></span>
-                </template>
-                <template #default="{ row }">
-                  <div v-if="editingRationale === row.requirementId" class="rationale-edit">
-                    <el-input
-                      v-model="rationaleEditValue"
-                      type="textarea"
-                      :rows="3"
-                      :placeholder="t('assessments.rationaleMinLength')"
-                      @keydown.escape="editingRationale = null"
-                    />
-                    <div class="rationale-edit-actions">
-                      <el-button size="small" type="primary" @click="saveRationale(row)">{{ t('common.save') }}</el-button>
-                      <el-button size="small" @click="editingRationale = null">{{ t('common.cancel') }}</el-button>
+
+              <!-- Domain-grouped requirements table -->
+              <div class="req-grouped-table">
+                <!-- Column headers -->
+                <div class="req-table-header">
+                  <div class="req-col-id">ID</div>
+                  <div class="req-col-name">NAME</div>
+                  <div class="req-col-result">RESULT</div>
+                  <div class="req-col-rationale">RATIONALE <HelpTip content="A written explanation of how the requirement is implemented. Minimum 15 words required." /></div>
+                  <div class="req-col-evidence">EVIDENCE</div>
+                </div>
+
+                <template v-for="dg in groupedRequirements" :key="dg.domain">
+                  <!-- Domain header row -->
+                  <el-tooltip :content="dg.domainDesc" placement="top-start" effect="dark" :show-after="400" :hide-after="0" popper-class="bsimm-tooltip">
+                    <div class="req-domain-header">
+                      <span class="req-domain-abbrev">{{ dg.domainAbbrev }}</span>
+                      <span class="req-domain-name">{{ dg.domain }}</span>
+                      <span class="req-domain-count">{{ dg.totalRows }} requirement{{ dg.totalRows !== 1 ? 's' : '' }}</span>
                     </div>
-                    <span class="rationale-hint">Minimum 15 words required</span>
-                  </div>
-                  <div v-else class="rationale-display" :class="{ 'read-only': isReadOnly }" @click="!isReadOnly && startEditRationale(row)">
-                    <span v-if="row.rationale" class="rationale-text">{{ row.rationale }}</span>
-                    <span v-else-if="!isReadOnly" class="rationale-placeholder">Click to add rationale...</span>
-                    <span v-else class="rationale-placeholder">No rationale</span>
-                  </div>
+                  </el-tooltip>
+
+                  <template v-for="pg in dg.practices" :key="pg.practice">
+                    <!-- Practice sub-header -->
+                    <el-tooltip :content="pg.practiceDesc" placement="top-start" effect="dark" :show-after="400" :hide-after="0" popper-class="bsimm-tooltip">
+                      <div class="req-practice-header">
+                        <span class="req-practice-abbrev">{{ pg.practiceAbbrev }}</span>
+                        <span class="req-practice-name">{{ pg.practice }}</span>
+                        <span class="req-practice-count">{{ pg.rows.length }}</span>
+                      </div>
+                    </el-tooltip>
+
+                    <!-- Requirement rows -->
+                    <div
+                      v-for="row in pg.rows"
+                      :key="row.requirementId"
+                      class="req-row"
+                      :class="{ 'req-row--incomplete': incompleteRequirements.has(row.requirementId) }"
+                    >
+                      <div class="req-col-id">
+                        <RouterLink :to="`/assessments/${encodeURIComponent(String(route.params.id))}/requirements/${row.requirementId}`" class="req-id-link">
+                          {{ row.identifier }}
+                        </RouterLink>
+                      </div>
+                      <div class="req-col-name">
+                        <RouterLink :to="`/assessments/${encodeURIComponent(String(route.params.id))}/requirements/${row.requirementId}`" class="req-name-link">
+                          {{ row.title || row.name }}
+                        </RouterLink>
+                      </div>
+                      <div class="req-col-result">
+                        <el-select v-model="row.result" size="small" placeholder="Select" :disabled="isReadOnly" @change="handleResultChange(row)">
+                          <el-option label="Yes" value="yes" />
+                          <el-option label="No" value="no" />
+                          <el-option label="Partial" value="partial" />
+                          <el-option label="N/A" value="not_applicable" />
+                        </el-select>
+                      </div>
+                      <div class="req-col-rationale">
+                        <div v-if="editingRationale === row.requirementId" class="rationale-edit">
+                          <el-input v-model="rationaleEditValue" type="textarea" :rows="3"
+                            :placeholder="t('assessments.rationaleMinLength')"
+                            @keydown.escape="editingRationale = null" />
+                          <div class="rationale-edit-actions">
+                            <el-button size="small" type="primary" @click="saveRationale(row)">{{ t('common.save') }}</el-button>
+                            <el-button size="small" @click="editingRationale = null">{{ t('common.cancel') }}</el-button>
+                          </div>
+                        </div>
+                        <div v-else class="rationale-display" :class="{ 'read-only': isReadOnly }" @click="!isReadOnly && startEditRationale(row)">
+                          <span v-if="row.rationale" class="rationale-text">{{ row.rationale }}</span>
+                          <span v-else-if="!isReadOnly" class="rationale-placeholder">Click to add rationale…</span>
+                          <span v-else class="rationale-placeholder">—</span>
+                        </div>
+                      </div>
+                      <div class="req-col-evidence">
+                        <el-button type="primary" link size="small" @click="openEvidencePickerDialog(row)">
+                          <span v-if="getEvidenceCountForRequirement(row.id) > 0">{{ getEvidenceCountForRequirement(row.id) }} linked</span>
+                          <span v-else>Link</span>
+                        </el-button>
+                      </div>
+                    </div>
+                  </template>
                 </template>
-              </el-table-column>
-              <el-table-column :label="t('assessments.linkedEvidence')" min-width="120" align="center">
-                <template #default="{ row }">
-                  <el-button
-                    type="primary"
-                    link
-                    size="small"
-                    @click="openEvidencePickerDialog(row)"
-                  >
-                    <span v-if="getEvidenceCountForRequirement(row.id) > 0">{{ getEvidenceCountForRequirement(row.id) }} linked</span>
-                    <span v-else>Link</span>
-                  </el-button>
-                </template>
-              </el-table-column>
-              </el-table>
+              </div>
             </div>
           </el-tab-pane>
 
           <el-tab-pane :label="t('assessments.evidence')" name="evidence">
             <div class="evidence-section">
-              <el-button v-if="!isReadOnly" type="primary" class="mb-token-4" @click="showCreateEvidenceDialog = true">
-                {{ t('assessments.addEvidence') }}
-              </el-button>
+              <div class="evidence-actions mb-token-4">
+                <el-button v-if="!isReadOnly" type="primary" @click="pendingLinkRequirementId = null; showCreateEvidenceDialog = true">
+                  {{ t('assessments.addEvidence') }}
+                </el-button>
+                <el-button v-if="!isReadOnly && assessment?.assessmentType === 'tasks'" @click="openLinkEvidenceDialog">
+                  Link Existing Evidence
+                </el-button>
+              </div>
               <div v-if="isLoadingEvidence" class="loading-state">
                 <el-skeleton :rows="3" animated />
               </div>
@@ -281,10 +335,21 @@
                     {{ formatDate(row.createdAt) }}
                   </template>
                 </el-table-column>
-                <el-table-column :label="t('evidence.linkedToRequirement')" min-width="200">
+                <el-table-column label="Linked via" min-width="200">
                   <template #default="{ row }">
                     <div class="requirement-tags" @click.stop>
-                      <template v-if="row.requirementIds && row.requirementIds.length > 0">
+                      <template v-if="row.directLink">
+                        <el-tag size="small" type="info" effect="plain">Direct (task)</el-tag>
+                        <el-button
+                          v-if="!isReadOnly"
+                          link
+                          size="small"
+                          type="danger"
+                          style="margin-left:8px"
+                          @click.stop="unlinkDirectEvidence(row.id)"
+                        >Unlink</el-button>
+                      </template>
+                      <template v-else-if="row.requirementIds && row.requirementIds.length > 0">
                         <span
                           v-for="rid in row.requirementIds"
                           :key="rid"
@@ -301,6 +366,43 @@
                 </el-table-column>
               </el-table>
             </div>
+
+            <!-- Link existing evidence dialog (task assessments) -->
+            <el-dialog v-model="showLinkEvidenceDialog" title="Link Existing Evidence" width="640px">
+              <el-input v-model="linkEvidenceSearch" placeholder="Search evidence by name…" clearable class="mb-3" />
+              <div v-if="isLoadingAvailableEvidence" class="loading-state"><el-skeleton :rows="3" animated /></div>
+              <el-table
+                v-else
+                :data="filteredLinkEvidence"
+                stripe
+                border
+                max-height="360"
+              >
+                <el-table-column :label="t('evidence.name')" min-width="220">
+                  <template #default="{ row }">{{ row.name }}</template>
+                </el-table-column>
+                <el-table-column :label="t('evidence.state')" min-width="110">
+                  <template #default="{ row }">
+                    <StateBadge :state="row.state" />
+                  </template>
+                </el-table-column>
+                <el-table-column label="" width="90" align="center">
+                  <template #default="{ row }">
+                    <el-button
+                      size="small"
+                      :disabled="isAlreadyLinked(row.id)"
+                      :type="isAlreadyLinked(row.id) ? 'info' : 'primary'"
+                      @click.stop="linkEvidence(row.id)"
+                    >
+                      {{ isAlreadyLinked(row.id) ? 'Linked' : 'Link' }}
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <template #footer>
+                <el-button @click="showLinkEvidenceDialog = false">Done</el-button>
+              </template>
+            </el-dialog>
           </el-tab-pane>
 
           <el-tab-pane label="Claims" name="claims">
@@ -358,7 +460,7 @@
                 <el-table-column label="References" min-width="120" align="center">
                   <template #default="{ row }">
                     <div v-if="row.externalReferences && row.externalReferences.length > 0" class="ext-ref-links">
-                      <a v-for="ref in row.externalReferences" :key="ref.id" :href="ref.url" target="_blank" rel="noopener noreferrer"
+                      <a v-for="ref in row.externalReferences" :key="ref.id" :href="safeExternalUrl(ref.url)" target="_blank" rel="noopener noreferrer"
                         class="ext-ref-pill" :title="ref.comment || ref.type" @click.stop>
                         {{ ref.type }}
                       </a>
@@ -372,10 +474,80 @@
 
           <el-tab-pane :label="t('assessments.attestation')" name="attestation">
             <div class="attestation-section">
+
+              <!-- ── Section 1: Requirement Conformance Scoring ─────────── -->
+              <div v-if="requirements.length > 0 && assessment.state !== 'new' && assessment.state !== 'pending'" class="req-scoring-section">
+                <div class="req-scoring-header">
+                  <div>
+                    <h3 class="section-title">Requirement Conformance</h3>
+                    <p class="section-subtitle">
+                      Record a conformance score for each requirement as you assess it.
+                      Scores carry forward automatically when the formal attestation is created.
+                    </p>
+                  </div>
+                  <div class="scoring-progress">
+                    <span class="scoring-count">{{ reqScoredCount }} / {{ requirements.length }} scored</span>
+                    <el-progress
+                      :percentage="requirements.length ? Math.round((reqScoredCount / requirements.length) * 100) : 0"
+                      :stroke-width="6"
+                      :show-text="false"
+                      :status="reqScoredCount === requirements.length ? 'success' : undefined"
+                      style="width: 120px"
+                    />
+                  </div>
+                </div>
+
+                <el-table :data="requirements" stripe border size="small" class="scoring-table">
+                  <el-table-column prop="requirement.identifier" label="ID" min-width="90" sortable />
+                  <el-table-column label="Requirement" min-width="220">
+                    <template #default="{ row }">
+                      {{ row.requirement?.name || row.name || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="Result" min-width="100" align="center">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.result" :type="resultTagType(row.result)" size="small">{{ row.result }}</el-tag>
+                      <span v-else class="text-tertiary">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column min-width="110" align="center">
+                    <template #header>
+                      <span>Conformance <HelpTip content="How well this requirement has been met (0–100%)." /></span>
+                    </template>
+                    <template #default="{ row }">
+                      <span v-if="row.conformanceScore !== null && row.conformanceScore !== undefined" :class="scoreClass(row.conformanceScore)">
+                        {{ Math.round(row.conformanceScore * 100) }}%
+                      </span>
+                      <span v-else class="text-tertiary">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column min-width="110" align="center">
+                    <template #header>
+                      <span>Confidence <HelpTip content="How confident the assessor is in this score (0–100%)." /></span>
+                    </template>
+                    <template #default="{ row }">
+                      <span v-if="row.confidenceScore !== null && row.confidenceScore !== undefined">
+                        {{ Math.round(row.confidenceScore * 100) }}%
+                      </span>
+                      <span v-else class="text-tertiary">—</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column v-if="!isReadOnly" label="" width="80" align="center">
+                    <template #default="{ row }">
+                      <el-button size="small" @click="openReqScoreDialog(row)">Score</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+
+              <el-divider v-if="requirements.length > 0 && assessment.state !== 'new' && assessment.state !== 'pending'" />
+
+              <!-- ── Section 2: Formal Attestation Record ───────────────── -->
               <div v-if="isLoadingAttestation" class="loading-state">
                 <el-skeleton :rows="3" animated />
               </div>
               <div v-else-if="attestation">
+                <h3 class="section-title">Attestation Record</h3>
                 <div class="attestation-header">
                   <div v-if="attestation.summary" class="info-field">
                     <label>{{ t('attestations.summary') }}</label>
@@ -386,30 +558,29 @@
                     <p>{{ attestation.signatory }}</p>
                   </div>
                 </div>
-                <el-divider />
-                <div class="attestation-requirements">
-                  <h3>{{ t('attestations.requirements') }}</h3>
-                  <el-table :data="attestationRequirements" stripe border>
-                    <el-table-column prop="identifier" :label="t('common.id')" min-width="100" sortable></el-table-column>
-                    <el-table-column :label="t('common.name')" min-width="250">
-                      <template #default="{ row }">
-                        {{ row.title || row.name }}
-                      </template>
+                <div v-if="attestationRequirements.length > 0" class="attestation-requirements mt-token-4">
+                  <h4>Attested Requirements</h4>
+                  <el-table :data="attestationRequirements" stripe border size="small">
+                    <el-table-column prop="identifier" :label="t('common.id')" min-width="100" sortable />
+                    <el-table-column :label="t('common.name')" min-width="220">
+                      <template #default="{ row }">{{ row.title || row.name }}</template>
                     </el-table-column>
-                    <el-table-column min-width="120">
+                    <el-table-column min-width="110" align="center">
                       <template #header>
                         <span>{{ t('assessments.conformanceScore') }} <HelpTip content="How well the requirement has been met, from 0% (not met) to 100% (fully met)." /></span>
                       </template>
                       <template #default="{ row }">
-                        {{ row.conformanceScore ? (row.conformanceScore * 100).toFixed(0) + '%' : '-' }}
+                        <span :class="scoreClass(row.conformanceScore)">
+                          {{ row.conformanceScore != null ? Math.round(row.conformanceScore * 100) + '%' : '—' }}
+                        </span>
                       </template>
                     </el-table-column>
-                    <el-table-column min-width="120">
+                    <el-table-column min-width="110" align="center">
                       <template #header>
-                        <span>{{ t('assessments.confidenceScore') }} <HelpTip content="How confident the assessor is in the conformance determination, from 0% (uncertain) to 100% (certain)." /></span>
+                        <span>{{ t('assessments.confidenceScore') }} <HelpTip content="How confident the assessor is in the conformance determination." /></span>
                       </template>
                       <template #default="{ row }">
-                        {{ row.confidenceScore ? (row.confidenceScore * 100).toFixed(0) + '%' : '-' }}
+                        {{ row.confidenceScore != null ? Math.round(row.confidenceScore * 100) + '%' : '—' }}
                       </template>
                     </el-table-column>
                   </el-table>
@@ -437,9 +608,13 @@
               <div v-else-if="isArchived && !attestation" class="empty-state">
                 <p>No attestation was created before archiving.</p>
               </div>
+              <div v-else-if="assessment.state === 'in_progress'" class="empty-state">
+                <p>Score requirements above during the assessment. The formal attestation record is created when the assessment is marked complete.</p>
+              </div>
               <div v-else class="empty-state">
                 <p>{{ t('assessments.attestationPending') }}</p>
               </div>
+
             </div>
           </el-tab-pane>
 
@@ -470,6 +645,42 @@
         </el-tabs>
       </el-card>
     </div>
+
+    <!-- Requirement Score Dialog -->
+    <el-dialog v-model="showReqScoreDialog" title="Score Requirement" width="500px">
+      <div v-if="reqScoreRow" class="req-score-dialog-content">
+        <div class="req-score-ident">
+          <strong>{{ reqScoreRow.requirement?.identifier }}</strong>
+          <span class="ml-2">{{ reqScoreRow.requirement?.name }}</span>
+        </div>
+        <el-form :model="reqScoreForm" label-width="140px" class="mt-token-4">
+          <el-form-item required>
+            <template #label>
+              Conformance <HelpTip content="How well this requirement has been met (0 = not met, 100 = fully met)." />
+            </template>
+            <el-slider v-model="reqScoreForm.conformanceScoreDisplay" :min="0" :max="100" :step="5" show-input />
+          </el-form-item>
+          <el-form-item label="Conformance Rationale" required>
+            <el-input v-model="reqScoreForm.conformanceRationale" type="textarea" :rows="3" placeholder="Explain how this score was determined…" />
+          </el-form-item>
+          <el-form-item>
+            <template #label>
+              Confidence <HelpTip content="How confident you are in the conformance score (0 = uncertain, 100 = certain)." />
+            </template>
+            <el-slider v-model="reqScoreForm.confidenceScoreDisplay" :min="0" :max="100" :step="5" show-input />
+          </el-form-item>
+          <el-form-item label="Confidence Rationale">
+            <el-input v-model="reqScoreForm.confidenceRationale" type="textarea" :rows="2" placeholder="Optional — explain confidence level…" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="showReqScoreDialog = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="savingReqScore" :disabled="!reqScoreForm.conformanceRationale" @click="handleSaveReqScore">
+          {{ t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- Edit Assessment Dialog -->
     <el-dialog v-model="showEditDialog" :title="t('assessments.editAssessment')" width="500px">
@@ -618,26 +829,59 @@
 
       <template #footer>
         <el-button @click="showEvidencePickerDialog = false">{{ t('common.cancel') }}</el-button>
+        <el-button @click="openCreateFromPicker">+ New Evidence</el-button>
         <el-button type="primary" @click="showEvidencePickerDialog = false">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- Create Evidence Dialog -->
-    <el-dialog v-model="showCreateEvidenceDialog" :title="t('evidence.newEvidence')" width="500px">
-      <el-form :model="createEvidenceForm" label-width="140px">
-        <el-form-item :label="t('evidence.name')" required>
-          <el-input v-model="createEvidenceForm.name" />
-        </el-form-item>
-        <el-form-item :label="t('common.description')">
-          <el-input v-model="createEvidenceForm.description" type="textarea" :rows="3" />
-        </el-form-item>
-        <el-form-item :label="t('evidence.classification')">
-          <el-input v-model="createEvidenceForm.classification" />
-        </el-form-item>
-        <el-form-item :label="t('evidence.expires')">
-          <el-date-picker v-model="createEvidenceForm.expiresOn" type="date" class="w-full" />
-        </el-form-item>
-      </el-form>
+    <el-dialog v-model="showCreateEvidenceDialog" :title="t('evidence.newEvidence')" width="640px" :close-on-click-modal="false">
+      <div class="ev-form-grid">
+        <div class="ev-field">
+          <label>Name <span class="ev-req">*</span></label>
+          <el-input v-model="createEvidenceForm.name" placeholder="Evidence name" :status="createEvidenceFormErrors.name ? 'error' : ''" />
+          <span v-if="createEvidenceFormErrors.name" class="ev-field-error">{{ createEvidenceFormErrors.name }}</span>
+        </div>
+        <div class="ev-field">
+          <label>State <span class="ev-req">*</span></label>
+          <el-select v-model="createEvidenceForm.state" style="width:100%">
+            <el-option label="In Progress" value="in_progress" />
+            <el-option label="In Review" value="in_review" />
+          </el-select>
+        </div>
+        <div class="ev-field">
+          <label>Type <span class="ev-req">*</span></label>
+          <el-select v-model="createEvidenceForm.type" style="width:100%">
+            <el-option label="Proof" value="proof" />
+            <el-option label="Counter Evidence" value="counter_evidence" />
+            <el-option label="Mitigation Strategy" value="mitigation_strategy" />
+          </el-select>
+        </div>
+        <div class="ev-field">
+          <label>Expires On</label>
+          <el-date-picker v-model="createEvidenceForm.expiresOn" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" style="width:100%" />
+        </div>
+        <div class="ev-field">
+          <label>Author</label>
+          <el-input :model-value="authStore.user?.displayName || '—'" disabled />
+        </div>
+        <div class="ev-field">
+          <label>Reviewer <span class="ev-req">*</span></label>
+          <el-select v-model="createEvidenceForm.reviewerId" filterable clearable placeholder="Select reviewer…" style="width:100%"
+            :class="createEvidenceFormErrors.reviewerId ? 'ev-select-error' : ''">
+            <el-option v-for="u in assignableUsers" :key="u.id" :label="u.displayName || u.username" :value="u.id" />
+          </el-select>
+          <span v-if="createEvidenceFormErrors.reviewerId" class="ev-field-error">{{ createEvidenceFormErrors.reviewerId }}</span>
+        </div>
+        <div class="ev-field ev-span-2">
+          <label>Owner <span class="ev-opt">(optional)</span></label>
+          <el-input v-model="createEvidenceForm.owner" placeholder="Person or team responsible for this evidence" />
+        </div>
+        <div class="ev-field ev-span-2">
+          <label>Description / Notes</label>
+          <el-input v-model="createEvidenceForm.description" type="textarea" :rows="4" placeholder="Describe the evidence and how it satisfies the requirement…" />
+        </div>
+      </div>
       <template #footer>
         <el-button @click="showCreateEvidenceDialog = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="isCreatingEvidence" @click="handleCreateEvidence">{{ t('common.create') }}</el-button>
@@ -861,17 +1105,31 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Check } from '@element-plus/icons-vue'
-import axios from 'axios'
-import type { Evidence, WorkNote, AssessmentRequirement, User, Assessment, Requirement } from '@/types'
+import client from '@/api/client'
+import type { Evidence, WorkNote, AssessmentRequirement, User, Assessment } from '@/types'
 import StateBadge from '@/components/shared/StateBadge.vue'
 import HelpTip from '@/components/shared/HelpTip.vue'
 import SearchSelect from '@/components/shared/SearchSelect.vue'
 import MentionTextarea from '@/components/shared/MentionTextarea.vue'
 import { formatDate } from '@/utils/dateFormat'
 import { apiErrorMessage } from '@/utils/errorMessage'
+
+// External reference URLs come from claim data; only http(s) links are
+// rendered, so a stored javascript: URL cannot run on click (security
+// review W9).
+function safeExternalUrl(url: unknown): string {
+  if (typeof url !== 'string') return '#'
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : '#'
+  } catch {
+    return '#'
+  }
+}
 
 interface Participant {
   id: string
@@ -883,6 +1141,7 @@ interface Participant {
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 
 /**
  * Compare two requirement identifiers using natural version ordering.
@@ -918,6 +1177,7 @@ const isArchived = computed(() => {
 const projectName = ref<string>('')
 const entityName = ref<string>('')
 const standardName = ref<string>('')
+const frameworkLabel = ref<string>('Framework')
 const availableEvidence = ref<Evidence[]>([])
 const evidenceCountByRequirement = ref<Map<string, number>>(new Map())
 const selectedRequirementForEvidencePicker = ref<AssessmentRequirement | null>(null)
@@ -929,7 +1189,7 @@ const activeTab = ref('requirements')
 const editingRationale = ref<string | null>(null)
 const rationaleEditValue = ref('')
 const incompleteRequirements = ref<Set<string>>(new Set())
-const completionErrors = ref({ unassessedCount: 0, missingRationaleCount: 0 })
+const completionErrors = ref({ unassessedCount: 0, missingRationaleCount: 0, openClaims: [] as string[], openMitigations: [] as string[] })
 const startBanner = ref<{ show: boolean; count: number }>({ show: false, count: 0 })
 const exportingCycloneDX = ref(false)
 const exportingPDF = ref(false)
@@ -947,15 +1207,32 @@ const showEditDialog = ref(false)
 const isSaving = ref(false)
 const isSavingNote = ref(false)
 const showEvidencePickerDialog = ref(false)
+const pendingLinkRequirementId = ref<string | null>(null)
 const showAddNoteDialog = ref(false)
 const showEditScoresDialog = ref(false)
+const showReqScoreDialog = ref(false)
+const savingReqScore = ref(false)
+const reqScoreRow = ref<AssessmentRequirement | null>(null)
+const reqScoreForm = ref({
+  conformanceScoreDisplay: 0,
+  conformanceRationale: '',
+  confidenceScoreDisplay: 0,
+  confidenceRationale: '',
+})
 const showCreateEvidenceDialog = ref(false)
+const showLinkEvidenceDialog = ref(false)
+const linkEvidenceSearch = ref('')
 const isCreatingEvidence = ref(false)
+const createEvidenceFormErrors = ref<Record<string, string>>({})
 const createEvidenceForm = ref({
   name: '',
   description: '',
+  state: 'in_progress',
+  type: 'proof',
   classification: '',
-  expiresOn: null as Date | null,
+  owner: '',
+  expiresOn: '' as string,
+  reviewerId: null as string | null,
 })
 
 // Claims tab state
@@ -1022,13 +1299,6 @@ const formatUsersList = (users: User[]): string => {
   return users.map(u => u.displayName || u.username || u.email || 'Unknown').join(', ')
 }
 
-const getScoreColor = (score: number): string => {
-  const style = getComputedStyle(document.documentElement)
-  if (score >= 80) return style.getPropertyValue('--cat-chart-green').trim() || '#3fb950'
-  if (score >= 60) return style.getPropertyValue('--cat-chart-amber').trim() || '#d29922'
-  return style.getPropertyValue('--cat-chart-red').trim() || '#f85149'
-}
-
 const getProgressStatus = (percent: number): string => {
   if (percent >= 80) return 'success'
   if (percent >= 60) return 'warning'
@@ -1036,6 +1306,65 @@ const getProgressStatus = (percent: number): string => {
 }
 
 const assessedCount = computed(() => requirements.value.filter(r => r.result).length)
+const reqScoredCount = computed(() => requirements.value.filter(r => r.conformanceScore !== null && r.conformanceScore !== undefined).length)
+
+const resultTagType = (result: string) => {
+  if (result === 'yes') return 'success'
+  if (result === 'no') return 'danger'
+  if (result === 'partial') return 'warning'
+  return 'info'
+}
+
+const scoreClass = (score: number | null | undefined) => {
+  if (score === null || score === undefined) return ''
+  if (score >= 0.8) return 'score-high'
+  if (score >= 0.5) return 'score-mid'
+  return 'score-low'
+}
+
+const openReqScoreDialog = (row: AssessmentRequirement) => {
+  reqScoreRow.value = row
+  reqScoreForm.value = {
+    conformanceScoreDisplay: row.conformanceScore != null ? Math.round(row.conformanceScore * 100) : 0,
+    conformanceRationale: row.conformanceRationale || '',
+    confidenceScoreDisplay: row.confidenceScore != null ? Math.round(row.confidenceScore * 100) : 0,
+    confidenceRationale: row.confidenceRationale || '',
+  }
+  showReqScoreDialog.value = true
+}
+
+const handleSaveReqScore = async () => {
+  if (!reqScoreRow.value) return
+  savingReqScore.value = true
+  try {
+    const assessmentId = route.params.id as string
+    const requirementId = reqScoreRow.value.requirementId
+    await client.put(`/assessments/${assessmentId}/requirements/${requirementId}`, {
+      conformance_score: reqScoreForm.value.conformanceScoreDisplay / 100,
+      conformance_rationale: reqScoreForm.value.conformanceRationale || null,
+      confidence_score: reqScoreForm.value.confidenceScoreDisplay / 100,
+      confidence_rationale: reqScoreForm.value.confidenceRationale || null,
+    })
+    // Update the local row so the table refreshes without a full reload
+    const idx = requirements.value.findIndex(r => r.requirementId === requirementId)
+    if (idx !== -1) {
+      requirements.value[idx] = {
+        ...requirements.value[idx],
+        conformanceScore: reqScoreForm.value.conformanceScoreDisplay / 100,
+        conformanceRationale: reqScoreForm.value.conformanceRationale || null,
+        confidenceScore: reqScoreForm.value.confidenceScoreDisplay / 100,
+        confidenceRationale: reqScoreForm.value.confidenceRationale || null,
+      }
+    }
+    ElMessage.success('Score saved')
+    showReqScoreDialog.value = false
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string } } }
+    ElMessage.error(e.response?.data?.error || 'Failed to save score')
+  } finally {
+    savingReqScore.value = false
+  }
+}
 const resultCounts = computed(() => ({
   yes: requirements.value.filter(r => r.result === 'yes').length,
   no: requirements.value.filter(r => r.result === 'no').length,
@@ -1044,6 +1373,121 @@ const resultCounts = computed(() => ({
   remaining: requirements.value.filter(r => !r.result).length,
 }))
 
+// ── BSIMM domain/practice parser ────────────────────────────────────────────
+// ── BSIMM taxonomy with descriptions ────────────────────────────────────────
+interface BsimmMeta {
+  practice: string
+  practiceAbbrev: string
+  practiceDesc: string
+  domain: string
+  domainAbbrev: string
+  domainDesc: string
+  domainOrder: number
+  practiceOrder: number
+}
+
+const BSIMM_DOMAIN_DESC: Record<string, string> = {
+  Governance:       'Strategy, metrics, compliance, policy, and training that define the security program\'s direction and accountability across the organisation.',
+  Intelligence:     'Threat intelligence, security standards, and design knowledge that inform secure development decisions.',
+  'SSDL Touchpoints': 'Security activities embedded directly into the software development lifecycle — architecture analysis, code review, and security testing.',
+  Deployment:       'Security practices that govern software release, environment configuration, and ongoing vulnerability management post-deployment.',
+}
+
+const BSIMM_PRACTICE_MAP: Record<string, BsimmMeta> = {
+  SM:   { practice: 'Strategy & Metrics',             practiceAbbrev: 'SM',   practiceDesc: 'Define and quantify the software security initiative using goals, metrics, and reporting to demonstrate program value.',                                    domain: 'Governance',        domainAbbrev: 'G',    domainDesc: BSIMM_DOMAIN_DESC['Governance'],        domainOrder: 0, practiceOrder: 0 },
+  CP:   { practice: 'Compliance & Policy',            practiceAbbrev: 'CP',   practiceDesc: 'Identify and enforce compliance obligations; translate regulatory requirements into enforceable security policies.',                                          domain: 'Governance',        domainAbbrev: 'G',    domainDesc: BSIMM_DOMAIN_DESC['Governance'],        domainOrder: 0, practiceOrder: 1 },
+  T:    { practice: 'Training',                       practiceAbbrev: 'T',    practiceDesc: 'Build security awareness and role-specific skills across development, operations, and management teams.',                                                     domain: 'Governance',        domainAbbrev: 'G',    domainDesc: BSIMM_DOMAIN_DESC['Governance'],        domainOrder: 0, practiceOrder: 2 },
+  AM:   { practice: 'Attack Models',                  practiceAbbrev: 'AM',   practiceDesc: 'Identify and document realistic threats; maintain adversary profiles and attack pattern libraries to inform design decisions.',                               domain: 'Intelligence',      domainAbbrev: 'I',    domainDesc: BSIMM_DOMAIN_DESC['Intelligence'],      domainOrder: 1, practiceOrder: 0 },
+  SFD:  { practice: 'Security Features & Design',     practiceAbbrev: 'SFD',  practiceDesc: 'Proactively design security capabilities such as authentication, cryptography, and access control into products from the start.',                           domain: 'Intelligence',      domainAbbrev: 'I',    domainDesc: BSIMM_DOMAIN_DESC['Intelligence'],      domainOrder: 1, practiceOrder: 1 },
+  SR:   { practice: 'Standards & Requirements',       practiceAbbrev: 'SR',   practiceDesc: 'Establish security standards and requirements that development teams reference during design and implementation of new features.',                           domain: 'Intelligence',      domainAbbrev: 'I',    domainDesc: BSIMM_DOMAIN_DESC['Intelligence'],      domainOrder: 1, practiceOrder: 2 },
+  AA:   { practice: 'Architecture Analysis',          practiceAbbrev: 'AA',   practiceDesc: 'Review software architectures for security risk before implementation to catch design-level flaws early, before code is written.',                          domain: 'SSDL Touchpoints',  domainAbbrev: 'SSDL', domainDesc: BSIMM_DOMAIN_DESC['SSDL Touchpoints'],  domainOrder: 2, practiceOrder: 0 },
+  CR:   { practice: 'Code Review',                    practiceAbbrev: 'CR',   practiceDesc: 'Use automated tools and manual techniques to find security defects in source code before it reaches production.',                                            domain: 'SSDL Touchpoints',  domainAbbrev: 'SSDL', domainDesc: BSIMM_DOMAIN_DESC['SSDL Touchpoints'],  domainOrder: 2, practiceOrder: 1 },
+  ST:   { practice: 'Security Testing',               practiceAbbrev: 'ST',   practiceDesc: 'Apply security-focused testing techniques — fuzzing, abuse cases, and targeted scanning — to validate security posture before release.',                    domain: 'SSDL Touchpoints',  domainAbbrev: 'SSDL', domainDesc: BSIMM_DOMAIN_DESC['SSDL Touchpoints'],  domainOrder: 2, practiceOrder: 2 },
+  PT:   { practice: 'Penetration Testing',            practiceAbbrev: 'PT',   practiceDesc: 'Perform targeted attacks on deployed software to discover exploitable vulnerabilities that automated testing and code review did not surface.',              domain: 'Deployment',        domainAbbrev: 'DEP',  domainDesc: BSIMM_DOMAIN_DESC['Deployment'],        domainOrder: 3, practiceOrder: 0 },
+  SE:   { practice: 'Software Environment',           practiceAbbrev: 'SE',   practiceDesc: 'Harden and monitor the runtime environment; control what software can be deployed, how it is configured, and how it behaves at runtime.',                  domain: 'Deployment',        domainAbbrev: 'DEP',  domainDesc: BSIMM_DOMAIN_DESC['Deployment'],        domainOrder: 3, practiceOrder: 1 },
+  CMVM: { practice: 'Config Mgmt & Vuln Mgmt',        practiceAbbrev: 'CMVM', practiceDesc: 'Track, prioritise, and remediate vulnerabilities discovered post-deployment; maintain accurate software bills of materials for all products.',              domain: 'Deployment',        domainAbbrev: 'DEP',  domainDesc: BSIMM_DOMAIN_DESC['Deployment'],        domainOrder: 3, practiceOrder: 2 },
+}
+
+function parseBsimmIdentifier(identifier: string): BsimmMeta | null {
+  if (!identifier) return null
+  const match = identifier.match(/^([A-Za-z]+)\d/)
+  if (!match) return null
+  return BSIMM_PRACTICE_MAP[match[1].toUpperCase()] || null
+}
+
+const practiceFilter = ref('')
+
+// Unfiltered domain→practice tree used only by the filter dropdown
+const allDomainGroups = computed(() => {
+  const domainMap = new Map<string, { domain: string; domainOrder: number; practices: { practice: string; practiceOrder: number }[] }>()
+  for (const r of requirements.value) {
+    const id = (r as unknown as Record<string, unknown>).identifier as string || ''
+    const meta = parseBsimmIdentifier(id)
+    const domain = meta?.domain || frameworkLabel.value
+    const practice = meta?.practice || frameworkLabel.value
+    const domainOrder = meta?.domainOrder ?? 99
+    const practiceOrder = meta?.practiceOrder ?? 99
+    if (!domainMap.has(domain)) domainMap.set(domain, { domain, domainOrder, practices: [] })
+    const dg = domainMap.get(domain)!
+    if (!dg.practices.find(p => p.practice === practice)) dg.practices.push({ practice, practiceOrder })
+  }
+  return [...domainMap.values()].sort((a, b) => a.domainOrder - b.domainOrder).map(d => ({ ...d, practices: d.practices.sort((a, b) => a.practiceOrder - b.practiceOrder) }))
+})
+
+interface PracticeGroup {
+  practice: string
+  practiceAbbrev: string
+  practiceDesc: string
+  practiceOrder: number
+  rows: AssessmentRequirement[]
+}
+
+interface DomainGroup {
+  domain: string
+  domainAbbrev: string
+  domainDesc: string
+  domainOrder: number
+  totalRows: number
+  practices: PracticeGroup[]
+}
+
+const groupedRequirements = computed((): DomainGroup[] => {
+  const domainMap = new Map<string, DomainGroup>()
+
+  for (const r of requirements.value) {
+    const identifier = (r as unknown as Record<string, unknown>).identifier as string || ''
+    const meta = parseBsimmIdentifier(identifier)
+    const domain = meta?.domain || frameworkLabel.value
+    const practiceKey = meta?.practice || frameworkLabel.value
+
+    if (practiceFilter.value && practiceFilter.value !== practiceKey) continue
+
+    if (!domainMap.has(domain)) {
+      domainMap.set(domain, {
+        domain,
+        domainAbbrev: meta?.domainAbbrev || '',
+        domainDesc: meta?.domainDesc || '',
+        domainOrder: meta?.domainOrder ?? 99,
+        totalRows: 0,
+        practices: [],
+      })
+    }
+    const dg = domainMap.get(domain)!
+    let pg = dg.practices.find(p => p.practice === practiceKey)
+    if (!pg) {
+      pg = { practice: practiceKey, practiceAbbrev: meta?.practiceAbbrev || '', practiceDesc: meta?.practiceDesc || '', practiceOrder: meta?.practiceOrder ?? 99, rows: [] }
+      dg.practices.push(pg)
+    }
+    pg.rows.push(r)
+    dg.totalRows++
+  }
+
+  const domains = [...domainMap.values()].sort((a, b) => a.domainOrder - b.domainOrder)
+  for (const d of domains) d.practices.sort((a, b) => a.practiceOrder - b.practiceOrder)
+  return domains
+})
+
+// All practices present in the loaded requirements, grouped for the filter dropdown
 const startEditRationale = (row: AssessmentRequirement) => {
   editingRationale.value = row.requirementId
   rationaleEditValue.value = row.rationale || ''
@@ -1057,7 +1501,7 @@ const saveRationale = async (row: AssessmentRequirement) => {
   }
   try {
     const assessmentId = route.params.id as string
-    await axios.put(`/api/v1/assessments/${assessmentId}/requirements/${row.requirementId}`, {
+    await client.put(`/assessments/${assessmentId}/requirements/${row.requirementId}`, {
       rationale: rationaleEditValue.value
     })
     row.rationale = rationaleEditValue.value
@@ -1072,7 +1516,7 @@ const saveRationale = async (row: AssessmentRequirement) => {
 const handleResultChange = async (row: AssessmentRequirement) => {
   try {
     const assessmentId = route.params.id as string
-    await axios.put(`/api/v1/assessments/${assessmentId}/requirements/${row.requirementId}`, {
+    await client.put(`/assessments/${assessmentId}/requirements/${row.requirementId}`, {
       result: row.result
     })
   } catch (err: unknown) {
@@ -1081,26 +1525,12 @@ const handleResultChange = async (row: AssessmentRequirement) => {
   }
 }
 
-const getRequirementRowClass = ({ row }: { row: AssessmentRequirement }) => {
-  const classes: string[] = []
-  if (incompleteRequirements.value.has(row.requirementId)) {
-    classes.push('incomplete-requirement')
-  }
-  if (!row.result) {
-    classes.push('missing-result')
-  }
-  if (!row.rationale) {
-    classes.push('missing-rationale')
-  }
-  return classes.join(' ')
-}
-
 const fetchAssessmentData = async () => {
   isLoading.value = true
   loadError.value = ''
   try {
     const assessmentId = route.params.id as string
-    const response = await axios.get(`/api/v1/assessments/${assessmentId}`)
+    const response = await client.get(`/assessments/${assessmentId}`)
 
     const { assessment: assessmentData, requirements: reqs, assessors: assrs, assessees: asses } = response.data
 
@@ -1117,6 +1547,7 @@ const fetchAssessmentData = async () => {
     const stdName = assessmentData.standardName || ''
     const stdVersion = assessmentData.standardVersion || ''
     standardName.value = stdVersion ? `${stdName} v${stdVersion}` : stdName
+    frameworkLabel.value = standardName.value || stdName || 'Framework'
   } catch (error) {
     loadError.value = t('common.errorLoading')
     ElMessage.error(t('common.errorLoading'))
@@ -1130,7 +1561,7 @@ const fetchEvidence = async () => {
   isLoadingEvidence.value = true
   try {
     const assessmentId = route.params.id as string
-    const response = await axios.get(`/api/v1/assessments/${assessmentId}/evidence`)
+    const response = await client.get(`/assessments/${assessmentId}/evidence`)
     evidence.value = Array.isArray(response.data) ? response.data : response.data.data || response.data.evidence || []
 
     // Build evidence count map by requirement
@@ -1146,13 +1577,51 @@ const fetchEvidence = async () => {
 const fetchAvailableEvidence = async () => {
   isLoadingAvailableEvidence.value = true
   try {
-    const response = await axios.get('/api/v1/evidence')
+    const response = await client.get('/evidence')
     availableEvidence.value = Array.isArray(response.data) ? response.data : response.data.data || response.data.evidence || []
   } catch (error) {
     console.error('Failed to fetch available evidence:', error)
     availableEvidence.value = []
   } finally {
     isLoadingAvailableEvidence.value = false
+  }
+}
+
+const filteredLinkEvidence = computed(() => {
+  const q = linkEvidenceSearch.value.toLowerCase()
+  if (!q) return availableEvidence.value
+  return availableEvidence.value.filter(e => e.name?.toLowerCase().includes(q))
+})
+
+const isAlreadyLinked = (evidenceId: string) => {
+  return evidence.value.some(e => e.id === evidenceId)
+}
+
+const openLinkEvidenceDialog = async () => {
+  if (availableEvidence.value.length === 0) await fetchAvailableEvidence()
+  linkEvidenceSearch.value = ''
+  showLinkEvidenceDialog.value = true
+}
+
+const linkEvidence = async (evidenceId: string) => {
+  if (!assessment.value) return
+  try {
+    await client.post(`/assessments/${assessment.value.id}/evidence/link`, { evidenceId })
+    await fetchEvidence()
+  } catch (error) {
+    console.error('Failed to link evidence:', error)
+    ElMessage.error('Failed to link evidence')
+  }
+}
+
+const unlinkDirectEvidence = async (evidenceId: string) => {
+  if (!assessment.value) return
+  try {
+    await client.delete(`/assessments/${assessment.value.id}/evidence/${evidenceId}/unlink`)
+    await fetchEvidence()
+  } catch (error) {
+    console.error('Failed to unlink evidence:', error)
+    ElMessage.error('Failed to unlink evidence')
   }
 }
 
@@ -1177,17 +1646,11 @@ const getRequirementIdentifierForEvidence = (requirementId: string | null): stri
   return req?.requirement?.identifier || null
 }
 
-const getRequirementIdentifier = (requirementId: string | null): string => {
-  if (!requirementId) return '-'
-  const req = requirements.value.find(r => r.id === requirementId)
-  return req?.requirement?.identifier || '-'
-}
-
 const fetchWorkNotes = async () => {
   isLoadingWorkNotes.value = true
   try {
     const assessmentId = route.params.id as string
-    const response = await axios.get(`/api/v1/assessments/${assessmentId}/notes`)
+    const response = await client.get(`/assessments/${assessmentId}/notes`)
     workNotes.value = response.data?.data || []
   } catch (error) {
     console.error('Failed to fetch work notes:', error)
@@ -1200,7 +1663,7 @@ const fetchWorkNotes = async () => {
 const fetchParticipants = async () => {
   try {
     const assessmentId = route.params.id as string
-    const response = await axios.get(`/api/v1/assessments/${assessmentId}/participants`)
+    const response = await client.get(`/assessments/${assessmentId}/participants`)
     mentionParticipants.value = response.data?.data || []
   } catch (error) {
     console.error('Failed to fetch participants:', error)
@@ -1225,7 +1688,7 @@ const handleSaveNote = async () => {
   isSavingNote.value = true
   try {
     const assessmentId = route.params.id as string
-    await axios.post(`/api/v1/assessments/${assessmentId}/notes`, {
+    await client.post(`/assessments/${assessmentId}/notes`, {
       content: newNoteForm.value.content
     })
     ElMessage.success(t('assessments.workNoteAdded'))
@@ -1259,7 +1722,7 @@ const fetchAttestation = async () => {
   isLoadingAttestation.value = true
   try {
     const assessmentId = route.params.id as string
-    const response = await axios.get(`/api/v1/attestations?assessmentId=${assessmentId}`)
+    const response = await client.get(`/attestations?assessmentId=${assessmentId}`)
     const attestations = Array.isArray(response.data) ? response.data : response.data.data || []
     if (attestations.length > 0) {
       attestation.value = attestations[0]
@@ -1275,7 +1738,7 @@ const fetchAttestation = async () => {
 const handleCreateAttestation = async () => {
   try {
     const assessmentId = route.params.id as string
-    await axios.post(`/api/v1/attestations`, {
+    await client.post(`/attestations`, {
       assessmentId: assessmentId
     })
     ElMessage.success(t('assessments.attestationCreated'))
@@ -1309,7 +1772,6 @@ const openEditScoresDialog = () => {
 
 const handleSaveScores = async () => {
   try {
-    const assessmentId = route.params.id as string
     const payload = editScoresForm.value.scores.map(score => {
       const conformanceDisplay = typeof score.conformance_score_display === 'number' ? score.conformance_score_display : 0
       const confidenceDisplay = typeof score.confidence_score_display === 'number' ? score.confidence_score_display : 0
@@ -1323,7 +1785,7 @@ const handleSaveScores = async () => {
     if (!attestation.value?.id) {
       throw new Error('Attestation not loaded')
     }
-    await axios.put(`/api/v1/attestations/${attestation.value.id}/scores`, { scores: payload })
+    await client.put(`/attestations/${attestation.value.id}/scores`, { scores: payload })
     ElMessage.success(t('common.success'))
     showEditScoresDialog.value = false
     await fetchAttestation()
@@ -1353,7 +1815,7 @@ const proceedWithExport = async () => {
   try {
     if (pendingExportType.value === 'cyclonedx') {
       exportingCycloneDX.value = true
-      const response = await axios.get(`/api/v1/export/assessment/${assessmentId}`, {
+      const response = await client.get(`/export/assessment/${assessmentId}`, {
         responseType: 'blob'
       })
       const url = window.URL.createObjectURL(response.data)
@@ -1366,7 +1828,7 @@ const proceedWithExport = async () => {
       window.URL.revokeObjectURL(url)
     } else if (pendingExportType.value === 'pdf') {
       exportingPDF.value = true
-      const response = await axios.get(`/api/v1/export/assessment/${assessmentId}/pdf`, {
+      const response = await client.get(`/export/assessment/${assessmentId}/pdf`, {
         responseType: 'blob'
       })
       const url = window.URL.createObjectURL(response.data)
@@ -1391,6 +1853,14 @@ const proceedWithExport = async () => {
 }
 
 const handleStartAssessment = async () => {
+  const assessmentId = route.params.id as string
+
+  // Targeted and task assessments need the setup screen before starting
+  if (assessment.value?.assessmentType === 'targeted' || assessment.value?.assessmentType === 'tasks') {
+    router.push(`/assessments/${assessmentId}/setup`)
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
       t('assessments.confirmStart'),
@@ -1402,8 +1872,7 @@ const handleStartAssessment = async () => {
       }
     )
 
-    const assessmentId = route.params.id as string
-    await axios.post(`/api/v1/assessments/${assessmentId}/start`)
+    await client.post(`/assessments/${assessmentId}/start`)
     ElMessage.success(t('assessments.startedSuccessfully'))
     await fetchAssessmentData()
 
@@ -1431,10 +1900,10 @@ const handleCompleteAssessment = async () => {
     )
 
     const assessmentId = route.params.id as string
-    await axios.post(`/api/v1/assessments/${assessmentId}/complete`)
+    await client.post(`/assessments/${assessmentId}/complete`)
     ElMessage.success(t('assessments.completedSuccessfully'))
     await fetchAssessmentData()
-    completionErrors.value = { unassessedCount: 0, missingRationaleCount: 0 }
+    completionErrors.value = { unassessedCount: 0, missingRationaleCount: 0, openClaims: [], openMitigations: [] }
 
     try {
       await ElMessageBox.confirm(
@@ -1452,12 +1921,14 @@ const handleCompleteAssessment = async () => {
     }
   } catch (error: unknown) {
     if (error !== 'cancel') {
-      const err = error as { response?: { data?: { unassessedCount?: number; missingRationaleCount?: number; error?: string } } }
+      const err = error as { response?: { data?: { unassessedCount?: number; missingRationaleCount?: number; openClaims?: string[]; openMitigations?: string[]; error?: string } } }
       const unassessedCount = err.response?.data?.unassessedCount || 0
       const missingRationaleCount = err.response?.data?.missingRationaleCount || 0
+      const openClaims = err.response?.data?.openClaims ?? []
+      const openMitigations = err.response?.data?.openMitigations ?? []
 
-      if (unassessedCount > 0 || missingRationaleCount > 0) {
-        completionErrors.value = { unassessedCount, missingRationaleCount }
+      if (unassessedCount > 0 || missingRationaleCount > 0 || openClaims.length > 0 || openMitigations.length > 0) {
+        completionErrors.value = { unassessedCount, missingRationaleCount, openClaims, openMitigations }
         incompleteRequirements.value = new Set(
           requirements.value
             .filter(r => !r.result || !r.rationale)
@@ -1470,7 +1941,13 @@ const handleCompleteAssessment = async () => {
         if (missingRationaleCount > 0) {
           msgs.push(t('assessments.missingRationale', { count: missingRationaleCount }))
         }
-        ElMessage.warning({ message: msgs.join('. '), duration: 5000 })
+        if (openClaims.length > 0) {
+          msgs.push(`${openClaims.length} claim(s) are not yet Accepted or Rejected`)
+        }
+        if (openMitigations.length > 0) {
+          msgs.push(`${openMitigations.length} mitigation(s) are not yet Verified or Closed`)
+        }
+        ElMessage.warning({ message: msgs.join('. '), duration: 6000 })
       } else {
         ElMessage.error(err.response?.data?.error || t('common.errorOccurred'))
       }
@@ -1490,7 +1967,7 @@ const handleReopenAssessment = async () => {
       }
     )
     const assessmentId = route.params.id as string
-    await axios.post(`/api/v1/assessments/${assessmentId}/reopen`)
+    await client.post(`/assessments/${assessmentId}/reopen`)
     ElMessage.success('Assessment reopened')
     await fetchAssessmentData()
   } catch (error: unknown) {
@@ -1514,7 +1991,7 @@ const handleArchiveAssessment = async () => {
       }
     )
     const assessmentId = route.params.id as string
-    await axios.post(`/api/v1/assessments/${assessmentId}/archive`)
+    await client.post(`/assessments/${assessmentId}/archive`)
     ElMessage.success('Assessment archived')
     await fetchAssessmentData()
   } catch (error: unknown) {
@@ -1560,7 +2037,7 @@ const handleSaveEdit = async () => {
         : editForm.value.dueDate
     }
 
-    await axios.put(`/api/v1/assessments/${assessmentId}`, payload)
+    await client.put(`/assessments/${assessmentId}`, payload)
     ElMessage.success(t('assessments.updatedSuccessfully'))
     showEditDialog.value = false
     await fetchAssessmentData()
@@ -1611,7 +2088,7 @@ const handleEvidenceCheckboxChange = async (evidenceItem: Evidence) => {
   try {
     if (isCurrentlyLinked) {
       // Unlink evidence
-      await axios.delete(`/api/v1/evidence/${evidenceItem.id}/unlink`, {
+      await client.delete(`/evidence/${evidenceItem.id}/unlink`, {
         data: {
           assessmentRequirementId: selectedRequirementForEvidencePicker.value.id
         }
@@ -1619,7 +2096,7 @@ const handleEvidenceCheckboxChange = async (evidenceItem: Evidence) => {
       ElMessage.success(t('common.success'))
     } else {
       // Link evidence
-      await axios.post(`/api/v1/evidence/${evidenceItem.id}/link`, {
+      await client.post(`/evidence/${evidenceItem.id}/link`, {
         assessmentRequirementId: selectedRequirementForEvidencePicker.value.id
       })
       ElMessage.success(t('common.success'))
@@ -1639,33 +2116,58 @@ const onEvidencePickerClosed = () => {
   evidenceSearchQuery.value = ''
 }
 
+const openCreateFromPicker = () => {
+  pendingLinkRequirementId.value = selectedRequirementForEvidencePicker.value?.id ?? null
+  showEvidencePickerDialog.value = false
+  showCreateEvidenceDialog.value = true
+}
+
 const handleCreateEvidence = async () => {
-  if (!createEvidenceForm.value.name) {
-    ElMessage.error('Name is required')
+  createEvidenceFormErrors.value = {}
+  if (!createEvidenceForm.value.name.trim()) {
+    createEvidenceFormErrors.value.name = 'Name is required'
+    return
+  }
+  if (!createEvidenceForm.value.reviewerId) {
+    createEvidenceFormErrors.value.reviewerId = 'Reviewer is required'
     return
   }
 
   isCreatingEvidence.value = true
   try {
     const payload: Record<string, unknown> = {
-      name: createEvidenceForm.value.name,
-      description: createEvidenceForm.value.description || undefined,
+      name: createEvidenceForm.value.name.trim(),
+      description: createEvidenceForm.value.description || null,
+      state: createEvidenceForm.value.state,
+      type: createEvidenceForm.value.type || null,
+      owner: createEvidenceForm.value.owner || null,
       classification: createEvidenceForm.value.classification || null,
-      expiresOn: createEvidenceForm.value.expiresOn
-        ? (createEvidenceForm.value.expiresOn instanceof Date
-            ? createEvidenceForm.value.expiresOn.toISOString().split('T')[0]
-            : createEvidenceForm.value.expiresOn)
-        : null,
+      reviewerId: createEvidenceForm.value.reviewerId,
+      isCounterEvidence: createEvidenceForm.value.type === 'counter_evidence',
+      expiresOn: createEvidenceForm.value.expiresOn || null,
     }
 
-    await axios.post('/api/v1/evidence', payload)
-    ElMessage.success('Evidence created successfully')
+    const { data: created } = await client.post('/evidence', payload)
+    const newEvidenceId = created?.id
+
+    if (newEvidenceId && pendingLinkRequirementId.value) {
+      await client.post(`/evidence/${newEvidenceId}/link`, {
+        assessmentRequirementId: pendingLinkRequirementId.value,
+      })
+    }
+    pendingLinkRequirementId.value = null
+
     showCreateEvidenceDialog.value = false
-    createEvidenceForm.value = { name: '', description: '', classification: '', expiresOn: null }
-    await fetchEvidence()
-    await fetchAvailableEvidence()
+    createEvidenceForm.value = { name: '', description: '', state: 'in_progress', type: 'proof', classification: '', owner: '', expiresOn: '', reviewerId: null }
+
+    if (newEvidenceId) {
+      router.push(`/evidence/${newEvidenceId}`)
+    }
   } catch (err: unknown) {
-    ElMessage.error(apiErrorMessage(err, 'Failed to create evidence'))
+    const e = err as { response?: { data?: { error?: string; details?: { path: string[]; message: string }[] } } }
+    const details = e?.response?.data?.details
+    const detailMsg = details?.map(d => `${d.path.join('.')}: ${d.message}`).join('; ')
+    ElMessage.error(detailMsg || apiErrorMessage(err, 'Failed to create evidence'))
   } finally {
     isCreatingEvidence.value = false
   }
@@ -1673,7 +2175,7 @@ const handleCreateEvidence = async () => {
 
 const fetchAssignableUsers = async () => {
   try {
-    const response = await axios.get('/api/v1/users/assignable')
+    const response = await client.get('/users/assignable')
     assignableUsers.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to fetch assignable users:', err)
@@ -1755,7 +2257,7 @@ const fetchClaims = async () => {
   isLoadingClaims.value = true
   try {
     const assessmentId = route.params.id as string
-    const response = await axios.get(`/api/v1/assessments/${assessmentId}/claims`)
+    const response = await client.get(`/assessments/${assessmentId}/claims`)
     assessmentClaims.value = Array.isArray(response.data) ? response.data : response.data.data || []
   } catch (error) {
     console.error('Failed to fetch claims:', error)
@@ -1769,11 +2271,11 @@ const handleClaimRowClick = async (row: { id: string; [key: string]: unknown }) 
   showClaimDetailDrawer.value = true
   isLoadingClaimDetail.value = true
   try {
-    const response = await axios.get(`/api/v1/assessments/${route.params.id}/claims`)
+    const response = await client.get(`/assessments/${encodeURIComponent(String(route.params.id))}/claims`)
     const claims = Array.isArray(response.data) ? response.data : response.data.data || []
     claimDetail.value = (claims.find((c: { id: string; [key: string]: unknown }) => c.id === row.id)) || row
     // Fetch full claim detail for evidence lists
-    const detailResponse = await axios.get(`/api/v1/claims/${row.id}`)
+    const detailResponse = await client.get(`/claims/${row.id}`)
     claimDetailEvidence.value = detailResponse.data.evidence || []
     claimDetailCounterEvidence.value = detailResponse.data.counterEvidence || []
   } catch (err) {
@@ -1787,7 +2289,7 @@ const handleClaimRowClick = async (row: { id: string; [key: string]: unknown }) 
 
 const fetchClaimTargetEntities = async () => {
   try {
-    const response = await axios.get('/api/v1/entities', { params: { limit: 200 } })
+    const response = await client.get('/entities', { params: { limit: 100 } })
     const entities = response.data.data || []
     claimTargetEntityOptions.value = entities.map((e: Record<string, unknown>) => ({
       value: e.id as string,
@@ -1829,7 +2331,7 @@ const handleCreateClaim = async () => {
       payload.attestationId = attestationId
     }
 
-    await axios.post('/api/v1/claims', payload)
+    await client.post('/claims', payload)
     ElMessage.success('Claim created successfully')
     showCreateClaimDialog.value = false
     createClaimForm.value = { name: '', targetEntityId: '', predicate: '', reasoning: '', isCounterClaim: false }
@@ -1882,7 +2384,7 @@ const handleSaveClaim = async () => {
       counterEvidenceIds: editClaimForm.value.counterEvidenceIds,
     }
 
-    await axios.put(`/api/v1/claims/${claimDetail.value?.id}`, payload)
+    await client.put(`/claims/${claimDetail.value?.id}`, payload)
     ElMessage.success('Claim updated successfully')
     isEditingClaim.value = false
     showClaimDetailDrawer.value = false
@@ -1909,7 +2411,7 @@ const handleDeleteClaim = async () => {
   }
 
   try {
-    await axios.delete(`/api/v1/claims/${claimDetail.value?.id}`)
+    await client.delete(`/claims/${claimDetail.value?.id}`)
     ElMessage.success('Claim deleted successfully')
     showClaimDetailDrawer.value = false
     await fetchClaims()
@@ -1954,7 +2456,7 @@ const ensureStandardDataLoaded = async () => {
   try {
     const standardId = assessment.value?.standardId
     if (!standardId) return
-    const response = await axios.get(`/api/v1/standards/${standardId}`)
+    const response = await client.get(`/standards/${standardId}`)
     const data = response.data
     // The requirements come back as a tree; flatten for parent lookups
     const tree = data.requirements || []
@@ -2089,6 +2591,73 @@ onMounted(() => {
 .attestation-section,
 .work-notes-section {
   padding: var(--cat-spacing-4) 0;
+}
+
+.req-scoring-section {
+  margin-bottom: var(--cat-spacing-4);
+}
+
+.req-scoring-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--cat-spacing-4);
+  margin-bottom: var(--cat-spacing-3);
+}
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cat-text-primary);
+  margin: 0 0 4px;
+}
+
+.section-subtitle {
+  font-size: 13px;
+  color: var(--cat-text-secondary);
+  margin: 0;
+}
+
+.scoring-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.scoring-count {
+  font-size: 13px;
+  color: var(--cat-text-secondary);
+  white-space: nowrap;
+}
+
+.scoring-table {
+  width: 100%;
+}
+
+.score-high { color: var(--el-color-success); font-weight: 600; }
+.score-mid  { color: var(--el-color-warning); font-weight: 600; }
+.score-low  { color: var(--el-color-danger);  font-weight: 600; }
+
+.req-score-dialog-content {
+  .req-score-ident {
+    padding: var(--cat-spacing-2) var(--cat-spacing-3);
+    background: var(--cat-bg-subtle);
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--cat-text-secondary);
+  }
+}
+
+.text-tertiary { color: var(--cat-text-tertiary); }
+.ml-2 { margin-left: 6px; }
+
+.req-id-link {
+  color: var(--cat-color-primary);
+  text-decoration: none;
+  font-weight: 500;
+  &:hover { text-decoration: underline; }
 }
 
 .evidence-link {
@@ -2369,30 +2938,178 @@ onMounted(() => {
   font-size: var(--cat-font-size-sm);
 }
 
-.result-yes {
-  color: #3fb950;
-  font-weight: var(--cat-font-weight-medium);
+.result-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.result-yes     { background: #1a7f4b18; color: #1a7f4b; }
+.result-no      { background: #da363318; color: #da3633; }
+.result-partial { background: #d2992218; color: #8a6000; }
+.result-na      { color: var(--cat-text-tertiary); background: var(--cat-bg-hover); }
+.result-remaining { color: var(--cat-text-secondary); background: var(--cat-bg-hover); }
+
+// ── Domain-grouped requirements table ─────────────────────────────────────
+.req-grouped-table {
+  border: 1px solid var(--cat-border-default);
+  border-radius: var(--cat-radius-md);
+  overflow: hidden;
 }
 
-.result-no {
-  color: #da3633;
-  font-weight: var(--cat-font-weight-medium);
+.req-table-header {
+  display: grid;
+  grid-template-columns: 100px 1fr 140px 1fr 110px;
+  background: var(--cat-bg-secondary);
+  border-bottom: 1px solid var(--cat-border-default);
+  padding: 0;
+
+  > div {
+    padding: 10px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--cat-text-tertiary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
 }
 
-.result-partial {
-  color: var(--cat-chart-amber);
-  font-weight: var(--cat-font-weight-medium);
+// Domain header
+.req-domain-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--el-color-primary-light-9);
+  border-top: 2px solid var(--el-color-primary-light-7);
+  border-bottom: 1px solid var(--el-color-primary-light-7);
+  cursor: default;
+
+  &:hover { background: var(--el-color-primary-light-8); }
 }
 
-.result-na {
+.req-domain-abbrev {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--el-color-primary);
+  background: var(--el-color-primary-light-7);
+  padding: 2px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+  min-width: 36px;
+  text-align: center;
+}
+
+.req-domain-name {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--el-color-primary);
+}
+
+.req-domain-count {
+  font-size: 11px;
   color: var(--cat-text-tertiary);
-  font-weight: var(--cat-font-weight-medium);
+  margin-left: auto;
+  padding-right: 4px;
 }
 
-.result-remaining {
-  color: var(--cat-text-secondary);
-  font-weight: var(--cat-font-weight-medium);
+// Practice sub-header
+.req-practice-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 28px;
+  background: var(--cat-bg-sidebar);
+  border-bottom: 1px solid var(--cat-border-default);
+  cursor: default;
+
+  &:hover { background: var(--cat-bg-hover); }
 }
+
+.req-practice-abbrev {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--cat-text-secondary);
+  background: var(--cat-bg-hover);
+  border: 1px solid var(--cat-border-default);
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  min-width: 30px;
+  text-align: center;
+}
+
+.req-practice-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cat-text-secondary);
+}
+
+.req-practice-count {
+  font-size: 11px;
+  color: var(--cat-text-tertiary);
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.req-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 140px 1fr 110px;
+  border-bottom: 1px solid var(--cat-border-default);
+  background: var(--cat-bg-primary);
+  transition: background 150ms ease;
+
+  &:last-child { border-bottom: none; }
+
+  &:hover { background: var(--cat-bg-hover); }
+
+  &--incomplete {
+    border-left: 3px solid var(--el-color-warning);
+  }
+
+  > div {
+    padding: 10px 14px;
+    display: flex;
+    align-items: flex-start;
+    font-size: 13px;
+  }
+}
+
+.req-col-id     { align-items: center !important; }
+.req-col-result { align-items: center !important; }
+.req-col-evidence { align-items: center !important; justify-content: center; }
+
+.req-col-name {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.req-id-link {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--el-color-primary);
+  text-decoration: none;
+  &:hover { text-decoration: underline; }
+}
+
+.req-name-link {
+  color: var(--cat-text-primary);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+  &:hover { color: var(--el-color-primary); text-decoration: underline; }
+}
+
 
 .rationale-display {
   cursor: pointer;
@@ -2492,6 +3209,15 @@ onMounted(() => {
       margin-bottom: 0;
     }
   }
+}
+
+.error-item-list {
+  display: block;
+  margin-top: 2px;
+  padding-left: 12px;
+  font-style: italic;
+  color: var(--cat-text-secondary);
+  font-size: 12px;
 }
 
 .context-link {
@@ -2887,5 +3613,56 @@ onMounted(() => {
 
 .claim-evidence-state-tag {
   margin-left: 6px;
+}
+</style>
+
+<!-- Tooltip for BSIMM domain/practice descriptions — needs :global scope to escape scoped styles -->
+<style>
+.bsimm-tooltip.el-popper {
+  max-width: 340px;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 10px 14px;
+}
+
+.ev-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+}
+.ev-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--cat-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+}
+.ev-span-2 { grid-column: span 2; }
+.ev-req { color: var(--el-color-danger); }
+.ev-opt { color: var(--cat-text-tertiary); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 2px; }
+.ev-field-error { font-size: 12px; color: var(--el-color-danger); }
+.ev-select-error :deep(.el-input__wrapper) { box-shadow: 0 0 0 1px var(--el-color-danger) inset; }
+
+.task-empty-state {
+  padding: var(--spacing-10, 48px) var(--spacing-6);
+
+  .task-empty-icon {
+    font-size: 40px;
+    margin-bottom: var(--spacing-3);
+  }
+  .task-empty-title {
+    font-size: 15px;
+    color: var(--cat-text-primary, var(--color-text-primary));
+    margin-bottom: var(--spacing-2);
+  }
+  .task-empty-desc {
+    font-size: 13px;
+    color: var(--cat-text-secondary, var(--color-text-secondary));
+  }
 }
 </style>

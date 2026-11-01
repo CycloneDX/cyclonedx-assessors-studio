@@ -2,11 +2,11 @@
 # CycloneDX Assessors Studio - Release Pipeline
 # =============================================================================
 # Triggered manually via workflow_dispatch. Builds, tests, creates a GitHub
-# release with compiled artifacts, and publishes the Docker image to Docker Hub.
+# release with compiled artifacts, and publishes the Docker image to the
+# repository's GitHub Container Registry (ghcr.io/<owner>/<repo>).
 #
-# Required repository secrets:
-#   DOCKERHUB_USERNAME   - Docker Hub username with push access
-#   DOCKERHUB_TOKEN      - Docker Hub access token (not password)
+# No registry secrets are needed: the publish job logs in with its own
+# GITHUB_TOKEN, scoped to packages: write.
 #
 # Security hardening:
 #   - All actions pinned to full commit SHAs (not tags)
@@ -14,6 +14,10 @@
 #   - persist-credentials: false on every checkout
 #   - npm ci with frozen lockfile (no mutation)
 #   - Docker image tagged with version and SHA for traceability
+#   - Each release ships a CycloneDX SBOM per package and a SHA256SUMS
+#     file; on public repositories the archives, SBOMs and image also get
+#     signed build-provenance attestations (Sigstore, via GitHub). Verify
+#     with: gh attestation verify <file> --repo <owner>/<repo>
 # =============================================================================
 
 name: Release
@@ -52,8 +56,12 @@ jobs:
     steps:
       - name: Validate version format
         id: check
+        # Passed through env, not interpolated into the script, so the input
+        # is data to the shell, never code (GitHub Actions injection pattern).
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${{ inputs.version }}"
+          VERSION="$INPUT_VERSION"
           # Strip leading v if someone accidentally includes it
           VERSION="${VERSION#v}"
           if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
@@ -182,7 +190,9 @@ jobs:
     timeout-minutes: 10
     needs: [validate, backend, frontend]
     permissions:
-      contents: write  # create tags and releases
+      contents: write      # create tags and releases
+      id-token: write      # sign build-provenance attestations
+      attestations: write  # store them
 
     steps:
       - name: Checkout
@@ -225,6 +235,35 @@ jobs:
           tar -czf "../assessors-studio-backend-${VERSION}.tar.gz" -C backend-dist .
           tar -czf "../assessors-studio-frontend-${VERSION}.tar.gz" -C frontend-dist .
 
+      # Production dependencies only, read from the lockfiles that built
+      # the archives. The version bump above makes the SBOM's root
+      # component carry the release version.
+      - name: Generate CycloneDX SBOMs
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          for pkg in backend frontend; do
+            npx --yes @cyclonedx/cyclonedx-npm@6.0.1 \
+              --package-lock-only --omit dev --spec-version 1.6 \
+              --output-reproducible --validate \
+              --output-file "assessors-studio-${pkg}-${VERSION}.cdx.json" \
+              "${pkg}/package.json"
+          done
+
+      - name: Write checksums
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          sha256sum assessors-studio-*-"${VERSION}".tar.gz \
+            assessors-studio-*-"${VERSION}".cdx.json > SHA256SUMS
+          cat SHA256SUMS
+
+      # Artifact attestations need a public repository (or GitHub
+      # Enterprise Cloud), so a private fork skips this step.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-checksums: SHA256SUMS
+
       - name: Create tag
         run: |
           TAG="${{ needs.validate.outputs.tag }}"
@@ -241,6 +280,9 @@ jobs:
           files: |
             assessors-studio-backend-${{ needs.validate.outputs.version }}.tar.gz
             assessors-studio-frontend-${{ needs.validate.outputs.version }}.tar.gz
+            assessors-studio-backend-${{ needs.validate.outputs.version }}.cdx.json
+            assessors-studio-frontend-${{ needs.validate.outputs.version }}.cdx.json
+            SHA256SUMS
 
   # ---------------------------------------------------------------------------
   # Build and publish the Docker image to Docker Hub
@@ -255,6 +297,9 @@ jobs:
     needs: [validate, backend, frontend]
     permissions:
       contents: read
+      packages: write
+      id-token: write      # sign the image attestation
+      attestations: write  # store it
 
     steps:
       - name: Checkout
@@ -268,23 +313,27 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
 
-      - name: Log in to Docker Hub
+      # The fork publishes to its own GitHub Container Registry with the
+      # job's GITHUB_TOKEN; it never pushes to upstream's Docker Hub repo.
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: cyclonedx/cyclonedx-assessors-studio
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=${{ needs.validate.outputs.version }}
             type=raw,value=latest,enable=${{ inputs.prerelease == false }}
             type=sha,prefix=
 
       - name: Build and push Docker image
+        id: push
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
         with:
           context: .
@@ -293,5 +342,20 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Registry image names must be lowercase; github.repository may not be.
+      - name: Image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest image provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

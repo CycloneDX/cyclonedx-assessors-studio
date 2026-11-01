@@ -43,25 +43,6 @@ vi.mock('@electric-sql/pglite', () => {
   };
 });
 
-// Mock kysely-pglite - must be a class with proper dialect interface
-vi.mock('kysely-pglite', () => {
-  class MockKyselyPGlite {
-    dialect: any;
-    constructor(pglite: any) {
-      this.dialect = {
-        createDriver: vi.fn(),
-        createQueryCompiler: vi.fn(),
-        createConnectionMutex: vi.fn(),
-        createAdapter: vi.fn(),
-        createExecutor: vi.fn(),
-      };
-    }
-  }
-  return {
-    KyselyPGlite: MockKyselyPGlite,
-  };
-});
-
 // Mock pg Pool
 vi.mock('pg', () => ({
   Pool: vi.fn(() => ({
@@ -276,7 +257,7 @@ describe('Database Connection Module', () => {
       expect(fs.default.mkdirSync).toHaveBeenCalledWith('/tmp/pglite-test', { recursive: true });
     });
 
-    it('should use KyselyPGlite wrapper for dialect', async () => {
+    it('should use the PGlite dialect', async () => {
       const db = await initializeDatabase();
 
       expect(db).toBeInstanceOf(Kysely);

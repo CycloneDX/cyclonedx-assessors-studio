@@ -21,3 +21,22 @@ export type PaginationParams = z.infer<typeof paginationSchema>;
 export function validatePagination(query: Record<string, unknown>): PaginationParams {
   return paginationSchema.parse(query);
 }
+
+/**
+ * Lenient pagination for list endpoints: never throws. Non-numeric,
+ * negative or fractional input falls back to safe values, so a bad query
+ * string cannot reach the database as a negative LIMIT/OFFSET and 500
+ * (security review I8).
+ */
+export function clampPagination(query: Record<string, unknown>, defaultLimit = 50): PaginationParams {
+  const toInt = (v: unknown): number | null => {
+    const n = Number(Array.isArray(v) ? v[0] : v);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  };
+  const limit = toInt(query.limit);
+  const offset = toInt(query.offset);
+  return {
+    limit: limit !== null && limit >= 1 ? Math.min(limit, 100) : defaultLimit,
+    offset: offset !== null && offset >= 0 ? offset : 0,
+  };
+}

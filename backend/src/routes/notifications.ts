@@ -14,8 +14,11 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   const { limit, offset } = validatePagination(req.query);
   const unreadOnly = req.query.unreadOnly === 'true';
 
+  // Without a select list Postgres returns zero-column rows, so the bell
+  // listed empty notifications.
   let query = db
     .selectFrom('notification')
+    .selectAll()
     .where('user_id', '=', req.user?.id ?? '');
 
   if (unreadOnly) {

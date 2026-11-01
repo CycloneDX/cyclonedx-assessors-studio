@@ -171,6 +171,7 @@ export interface NotificationRule {
 
 export interface Assessment {
   id: Generated<string>;
+  deleted_at: Generated<Date | null>;
   title: string;
   description?: string | null;
   project_id?: string | null;
@@ -181,6 +182,8 @@ export interface Assessment {
   start_date?: Date | null;
   end_date?: Date | null;
   state: 'new' | 'pending' | 'in_progress' | 'on_hold' | 'cancelled' | 'complete' | 'archived';
+  assessment_type: 'standards' | 'targeted' | 'tasks';
+  task_label?: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -204,12 +207,27 @@ export interface AssessmentRequirement {
   evidence_id?: string | null;
   result?: 'yes' | 'no' | 'partial' | 'not_applicable' | null;
   rationale?: string | null;
+  owner?: string | null;
+  owner_email?: string | null;
+  owner_role?: string | null;
+  oe_entity?: string | null;
+  business_unit?: string | null;
+  region?: string | null;
+  assessed_by?: string | null;
+  assessment_date?: Date | null;
+  next_review_date?: Date | null;
+  conformance_score?: number | null;
+  conformance_rationale?: string | null;
+  confidence_score?: number | null;
+  confidence_rationale?: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
 export interface Evidence {
   id: Generated<string>;
+  deleted_at: Generated<Date | null>;
+  display_id: Generated<number>;
   bom_ref?: string | null;
   name: string;
   property_name?: string | null;
@@ -220,6 +238,12 @@ export interface Evidence {
   expires_on?: Date | null;
   is_counter_evidence: boolean;
   classification?: string | null;
+  owner?: string | null;
+  type?: 'proof' | 'counter_evidence' | 'mitigation_strategy' | null;
+  evidence_notes?: string | null;
+  geo_latitude?: number | null;
+  geo_longitude?: number | null;
+  geo_label?: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -249,6 +273,8 @@ export interface EvidenceAttachment {
 
 export interface Claim {
   id: Generated<string>;
+  deleted_at: Generated<Date | null>;
+  display_id: Generated<number>;
   bom_ref?: string | null;
   name: string;
   target: string;
@@ -257,6 +283,15 @@ export interface Claim {
   reasoning?: string | null;
   is_counter_claim: boolean;
   attestation_id?: string | null;
+  status: string;
+  claim_type?: string | null;
+  confidence?: string | null;
+  project_name?: string | null;
+  project_requirement?: string | null;
+  framework?: string | null;
+  assessor?: string | null;
+  claim_date?: Date | null;
+  work_notes?: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -454,6 +489,12 @@ export interface AssessmentRequirementEvidence {
   created_at: Generated<Date>;
 }
 
+export interface AssessmentEvidence {
+  assessment_id: string;
+  evidence_id: string;
+  created_at: Generated<Date>;
+}
+
 export interface WorkNote {
   id: Generated<string>;
   assessment_id: string;
@@ -533,11 +574,16 @@ export interface PasswordResetToken {
 
 export interface Entity {
   id: Generated<string>;
+  deleted_at: Generated<Date | null>;
   name: string;
   description?: string | null;
   entity_type: 'organization' | 'business_unit' | 'team' | 'product' | 'product_version' | 'component' | 'service' | 'project';
   state: 'active' | 'inactive' | 'archived';
   bom_ref?: string | null;
+  country?: string | null;
+  region?: string | null;
+  locality?: string | null;
+  timezone?: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -601,18 +647,6 @@ export interface ClaimExternalReference {
   type: string;
   url: string;
   comment?: string | null;
-  created_at: Generated<Date>;
-  updated_at: Generated<Date>;
-}
-
-export interface Dashboard {
-  id: Generated<string>;
-  name: string;
-  description?: string | null;
-  owner_id: string;
-  is_default: Generated<boolean>;
-  is_shared: Generated<boolean>;
-  layout: Record<string, unknown>; // JSONB: array of widget layout items
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -690,6 +724,62 @@ export interface AppConfig {
   updated_at: Generated<Date>;
 }
 
+export interface Mitigation {
+  id: Generated<string>;
+  deleted_at: Generated<Date | null>;
+  display_id: Generated<number>;
+  mitigation_id?: string | null;
+  title: string;
+  type: string;
+  category?: string | null;
+  priority: string;
+  status: string;
+  effectiveness?: string | null;
+  description?: string | null;
+  owner?: string | null;
+  notes?: string | null;
+  team?: string | null;
+  reviewer?: string | null;
+  linked_assessment?: string | null;
+  target_date?: Date | string | null;
+  completion_date?: Date | string | null;
+  verified_by?: string | null;
+  effectiveness_rationale?: string | null;
+  created_by?: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface MitigationClaim {
+  mitigation_id: string;
+  claim_id: string;
+  created_at: Generated<Date>;
+}
+
+export interface MitigationEvidence {
+  mitigation_id: string;
+  evidence_id: string;
+  created_at: Generated<Date>;
+}
+
+export interface ScheduledAssessment {
+  id: Generated<string>;
+  title: string;
+  description?: string | null;
+  project_id?: string | null;
+  assessor_id?: string | null;
+  standard_id?: string | null;
+  assessment_id?: string | null;
+  scheduled_date: Date;
+  due_date?: Date | null;
+  recurrence: 'none' | 'weekly' | 'monthly' | 'quarterly' | 'yearly';
+  status: 'scheduled' | 'in_progress' | 'on_hold' | 'complete' | 'failed' | 'warning';
+  notes?: string | null;
+  created_by?: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface Database {
   permission: Selectable<Permission>;
   permission_insert: Insertable<Permission>;
@@ -743,6 +833,13 @@ export interface Database {
   assessment_insert: Insertable<Assessment>;
   assessment_update: Updateable<Assessment>;
 
+  // Soft-delete: the public name above is a filtered VIEW; *_raw is the
+  // physical table. Restore (set deleted_at=NULL) and purge (hard DELETE of
+  // rows past retention) target *_raw because the view hides those rows.
+  assessment_raw: Selectable<Assessment>;
+  assessment_raw_insert: Insertable<Assessment>;
+  assessment_raw_update: Updateable<Assessment>;
+
   assessment_assessor: Selectable<AssessmentAssessor>;
   assessment_assessor_insert: Insertable<AssessmentAssessor>;
 
@@ -757,6 +854,10 @@ export interface Database {
   evidence_insert: Insertable<Evidence>;
   evidence_update: Updateable<Evidence>;
 
+  evidence_raw: Selectable<Evidence>;
+  evidence_raw_insert: Insertable<Evidence>;
+  evidence_raw_update: Updateable<Evidence>;
+
   evidence_note: Selectable<EvidenceNote>;
   evidence_note_insert: Insertable<EvidenceNote>;
 
@@ -766,6 +867,10 @@ export interface Database {
   claim: Selectable<Claim>;
   claim_insert: Insertable<Claim>;
   claim_update: Updateable<Claim>;
+
+  claim_raw: Selectable<Claim>;
+  claim_raw_insert: Insertable<Claim>;
+  claim_raw_update: Updateable<Claim>;
 
   claim_evidence: Selectable<ClaimEvidence>;
   claim_evidence_insert: Insertable<ClaimEvidence>;
@@ -822,6 +927,9 @@ export interface Database {
   assessment_requirement_evidence: Selectable<AssessmentRequirementEvidence>;
   assessment_requirement_evidence_insert: Insertable<AssessmentRequirementEvidence>;
 
+  assessment_evidence: Selectable<AssessmentEvidence>;
+  assessment_evidence_insert: Insertable<AssessmentEvidence>;
+
   work_note: Selectable<WorkNote>;
   work_note_insert: Insertable<WorkNote>;
 
@@ -851,6 +959,10 @@ export interface Database {
   entity_insert: Insertable<Entity>;
   entity_update: Updateable<Entity>;
 
+  entity_raw: Selectable<Entity>;
+  entity_raw_insert: Insertable<Entity>;
+  entity_raw_update: Updateable<Entity>;
+
   entity_relationship: Selectable<EntityRelationship>;
   entity_relationship_insert: Insertable<EntityRelationship>;
   entity_relationship_update: Updateable<EntityRelationship>;
@@ -865,9 +977,6 @@ export interface Database {
   compliance_policy_insert: Insertable<CompliancePolicy>;
   compliance_policy_update: Updateable<CompliancePolicy>;
 
-  dashboard: Selectable<Dashboard>;
-  dashboard_insert: Insertable<Dashboard>;
-  dashboard_update: Updateable<Dashboard>;
 
   assessor: Selectable<Assessor>;
   assessor_insert: Insertable<Assessor>;
@@ -910,4 +1019,22 @@ export interface Database {
   app_config: Selectable<AppConfig>;
   app_config_insert: Insertable<AppConfig>;
   app_config_update: Updateable<AppConfig>;
+
+  mitigation: Selectable<Mitigation>;
+  mitigation_insert: Insertable<Mitigation>;
+  mitigation_update: Updateable<Mitigation>;
+
+  mitigation_raw: Selectable<Mitigation>;
+  mitigation_raw_insert: Insertable<Mitigation>;
+  mitigation_raw_update: Updateable<Mitigation>;
+
+  mitigation_claim: Selectable<MitigationClaim>;
+  mitigation_claim_insert: Insertable<MitigationClaim>;
+
+  mitigation_evidence: Selectable<MitigationEvidence>;
+  mitigation_evidence_insert: Insertable<MitigationEvidence>;
+
+  scheduled_assessment: Selectable<ScheduledAssessment>;
+  scheduled_assessment_insert: Insertable<ScheduledAssessment>;
+  scheduled_assessment_update: Updateable<ScheduledAssessment>;
 }

@@ -494,10 +494,50 @@ CREATE TABLE IF NOT EXISTS assessment_requirement (
   evidence_id UUID REFERENCES evidence(id) ON DELETE SET NULL,
   result VARCHAR(50) CHECK(result IN ('yes', 'no', 'partial', 'not_applicable')),
   rationale TEXT,
+  owner VARCHAR(255),
+  owner_email VARCHAR(255),
+  owner_role VARCHAR(255),
+  oe_entity VARCHAR(255),
+  business_unit VARCHAR(255),
+  region VARCHAR(100),
+  assessed_by VARCHAR(255),
+  assessment_date DATE,
+  next_review_date DATE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(assessment_id, requirement_id)
 );
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS owner VARCHAR(255);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS owner_email VARCHAR(255);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS owner_role VARCHAR(255);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS oe_entity VARCHAR(255);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS business_unit VARCHAR(255);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS region VARCHAR(100);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS assessed_by VARCHAR(255);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS assessment_date DATE;
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS next_review_date DATE;
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS conformance_score DECIMAL(3, 2) CHECK(conformance_score >= 0 AND conformance_score <= 1);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS conformance_rationale TEXT;
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS confidence_score DECIMAL(3, 2) CHECK(confidence_score >= 0 AND confidence_score <= 1);
+ALTER TABLE assessment_requirement ADD COLUMN IF NOT EXISTS confidence_rationale TEXT;
+
+ALTER TABLE assessment ADD COLUMN IF NOT EXISTS assessment_type VARCHAR(50) DEFAULT 'standards';
+ALTER TABLE assessment ADD COLUMN IF NOT EXISTS task_label VARCHAR(25);
+
+CREATE TABLE IF NOT EXISTS assessment_evidence (
+  assessment_id UUID NOT NULL REFERENCES assessment(id) ON DELETE CASCADE,
+  evidence_id UUID NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (assessment_id, evidence_id)
+);
+
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS owner VARCHAR(255);
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS type VARCHAR(50) CHECK(type IN ('proof', 'counter_evidence', 'mitigation_strategy'));
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS evidence_notes TEXT;
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS geo_latitude DOUBLE PRECISION;
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS geo_longitude DOUBLE PRECISION;
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS geo_label VARCHAR(255);
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS display_id SERIAL;
 
 CREATE TABLE IF NOT EXISTS assessment_requirement_evidence (
   assessment_requirement_id UUID NOT NULL REFERENCES assessment_requirement(id) ON DELETE CASCADE,
@@ -629,6 +669,51 @@ CREATE TABLE IF NOT EXISTS claim_external_reference (
 
 CREATE INDEX IF NOT EXISTS idx_claim_ext_ref_claim ON claim_external_reference(claim_id);
 
+-- =====================================================================
+-- Mitigations
+-- =====================================================================
+--
+-- A mitigation strategy tracks remediation work linked to claims and
+-- evidence. status drives the workflow pipeline shown in the UI.
+-- effectiveness is set after implementation is verified.
+
+CREATE TABLE IF NOT EXISTS mitigation (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  mitigation_id VARCHAR(50),
+  title VARCHAR(255) NOT NULL,
+  type VARCHAR(100) NOT NULL CHECK(type IN ('Technical', 'Process', 'Policy', 'Training', 'Physical')),
+  category VARCHAR(100) CHECK(category IN ('Preventive', 'Detective', 'Corrective', 'Compensating')),
+  priority VARCHAR(50) NOT NULL CHECK(priority IN ('Critical', 'High', 'Medium', 'Low')),
+  status VARCHAR(50) NOT NULL DEFAULT 'Proposed' CHECK(status IN ('Proposed', 'In Progress', 'Implemented', 'Verified', 'Closed')),
+  effectiveness VARCHAR(100) CHECK(effectiveness IN ('Effective', 'Partially Effective', 'Not Effective', 'Unknown')),
+  description TEXT,
+  owner VARCHAR(255),
+  notes TEXT,
+  created_by UUID REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_mitigation_status ON mitigation(status);
+CREATE INDEX IF NOT EXISTS idx_mitigation_priority ON mitigation(priority);
+
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS display_id SERIAL;
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS display_id SERIAL;
+
+CREATE TABLE IF NOT EXISTS mitigation_claim (
+  mitigation_id UUID NOT NULL REFERENCES mitigation(id) ON DELETE CASCADE,
+  claim_id UUID NOT NULL REFERENCES claim(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (mitigation_id, claim_id)
+);
+
+CREATE TABLE IF NOT EXISTS mitigation_evidence (
+  mitigation_id UUID NOT NULL REFERENCES mitigation(id) ON DELETE CASCADE,
+  evidence_id UUID NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (mitigation_id, evidence_id)
+);
+
 -- CycloneDX attestation.map[].claims[] and counterClaims[].
 CREATE TABLE IF NOT EXISTS attestation_requirement_claim (
   attestation_requirement_id UUID NOT NULL REFERENCES attestation_requirement(id) ON DELETE CASCADE,
@@ -751,7 +836,7 @@ CREATE TABLE IF NOT EXISTS user_signature (
 CREATE INDEX IF NOT EXISTS idx_user_signature_user ON user_signature(user_id);
 
 -- =====================================================================
--- Work notes, audit, notifications, dashboards
+-- Work notes, audit, notifications
 -- =====================================================================
 
 CREATE TABLE IF NOT EXISTS work_note (
@@ -796,22 +881,40 @@ CREATE TABLE IF NOT EXISTS notification (
 CREATE INDEX IF NOT EXISTS idx_notification_user ON notification(user_id);
 CREATE INDEX IF NOT EXISTS idx_notification_read ON notification(user_id, is_read);
 
--- User created dashboards with widget layouts. The layout column is
--- a JSONB array of widget descriptors consumed by the dashboard
--- widget registry on the client.
-CREATE TABLE IF NOT EXISTS dashboard (
+-- =====================================================================
+-- Assessment Scheduler
+-- =====================================================================
+--
+-- Stores planned/scheduled assessment events for projects. Each row
+-- represents one scheduled occurrence. Recurrence creates child rows
+-- (or the UI generates them on-the-fly). The assessor_id references
+-- the app_user who is assigned to perform the assessment.
+
+CREATE TABLE IF NOT EXISTS scheduled_assessment (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name VARCHAR(255) NOT NULL,
+  title VARCHAR(255) NOT NULL,
   description TEXT,
-  owner_id UUID NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  is_default BOOLEAN NOT NULL DEFAULT FALSE,
-  is_shared BOOLEAN NOT NULL DEFAULT FALSE,
-  layout JSONB NOT NULL DEFAULT '[]',
+  project_id UUID REFERENCES project(id) ON DELETE CASCADE,
+  assessor_id UUID REFERENCES app_user(id) ON DELETE SET NULL,
+  standard_id UUID REFERENCES standard(id) ON DELETE SET NULL,
+  assessment_id UUID REFERENCES assessment(id) ON DELETE SET NULL,
+  scheduled_date DATE NOT NULL,
+  due_date DATE,
+  recurrence VARCHAR(20) NOT NULL DEFAULT 'none' CHECK(recurrence IN ('none', 'weekly', 'monthly', 'quarterly', 'yearly')),
+  status VARCHAR(20) NOT NULL DEFAULT 'scheduled' CHECK(status IN ('scheduled', 'in_progress', 'on_hold', 'complete', 'failed', 'warning')),
+  notes TEXT,
+  created_by UUID REFERENCES app_user(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_dashboard_owner ON dashboard(owner_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_assessment_project ON scheduled_assessment(project_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_assessment_assessor ON scheduled_assessment(assessor_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_assessment_date ON scheduled_assessment(scheduled_date);
+
+-- The configurable-dashboard table was retired with its API (the
+-- dashboard is fixed tabs). Drop it from databases created earlier.
+DROP TABLE IF EXISTS dashboard;
 
 -- =====================================================================
 -- Webhook and chat notification channels
@@ -942,6 +1045,54 @@ CREATE TABLE IF NOT EXISTS compliance_policy (
 -- DELETE is naturally idempotent on repeat runs.
 DELETE FROM role_permission WHERE permission_id IN (SELECT id FROM permission WHERE key = 'requirements.edit');
 DELETE FROM permission WHERE key = 'requirements.edit';
+
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS team VARCHAR(255);
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS reviewer VARCHAR(255);
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS linked_assessment VARCHAR(100);
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS target_date DATE;
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS completion_date DATE;
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS verified_by VARCHAR(255);
+ALTER TABLE mitigation ADD COLUMN IF NOT EXISTS effectiveness_rationale TEXT;
+
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS display_id SERIAL;
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'Draft';
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS claim_type VARCHAR(100);
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS confidence VARCHAR(50);
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS project_name VARCHAR(255);
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS project_requirement VARCHAR(100);
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS framework VARCHAR(255);
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS assessor VARCHAR(255);
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS claim_date DATE;
+ALTER TABLE claim ADD COLUMN IF NOT EXISTS work_notes TEXT;
+
+-- Geolocation fields for entity (organization, business_unit, team, service)
+ALTER TABLE entity ADD COLUMN IF NOT EXISTS country VARCHAR(100);
+ALTER TABLE entity ADD COLUMN IF NOT EXISTS region VARCHAR(100);
+ALTER TABLE entity ADD COLUMN IF NOT EXISTS locality VARCHAR(100);
+ALTER TABLE entity ADD COLUMN IF NOT EXISTS timezone VARCHAR(60);
+
+-- Least-privilege scopes: add the projects/claims view_all permissions (their
+-- assessments/evidence counterparts already exist) and grant the broad-data
+-- view_all set to admin and assessor. Assessors see all data but reach no admin
+-- panel, while assessees keep only the base participation-scoped view perms.
+-- Idempotent via ON CONFLICT so it is safe on every boot and on existing DBs.
+INSERT INTO permission (id, key, name, description, category) VALUES (gen_random_uuid(), 'projects.view_all', 'View All Projects', 'View all projects regardless of assessment participation', 'projects') ON CONFLICT (key) DO NOTHING;
+INSERT INTO permission (id, key, name, description, category) VALUES (gen_random_uuid(), 'claims.view_all', 'View All Claims', 'View all claims regardless of assessment participation', 'claims') ON CONFLICT (key) DO NOTHING;
+INSERT INTO role_permission (role_id, permission_id) SELECT r.id, p.id FROM role r, permission p WHERE r.key = 'admin' AND p.key IN ('projects.view_all', 'claims.view_all') ON CONFLICT DO NOTHING;
+INSERT INTO role_permission (role_id, permission_id) SELECT r.id, p.id FROM role r, permission p WHERE r.key = 'assessor' AND p.key IN ('assessments.view_all', 'evidence.view_all', 'projects.view_all', 'claims.view_all') ON CONFLICT DO NOTHING;
+
+-- API keys always expire (security review A3). Keys created before that rule
+-- had no expiry, so they get the default 90 days from the first boot of this
+-- version. A no-op once every key has an expiry. (No semicolons in comments:
+-- the runner splits this template on them.)
+UPDATE api_key SET expires_at = CURRENT_TIMESTAMP + INTERVAL '90 days' WHERE expires_at IS NULL;
+
+-- NOTE soft-delete support (deleted_at columns, the raw-table rename, and the
+-- filtered views) is installed by installSoftDeleteViews below, not here. It
+-- runs as a guarded post-step because the naive statement splitter used for
+-- this template cannot hold a DO block, and because after the first run the
+-- public table name (for example assessment) is a VIEW, so an ALTER TABLE
+-- against it in this template would fail on every subsequent boot.
 `;
 
 export async function runMigrations(): Promise<void> {
@@ -970,6 +1121,18 @@ export async function runMigrations(): Promise<void> {
         if (msg.includes('already exists')) {
           continue;
         }
+        // Soft-delete idempotency: on the second and later boots the five
+        // deletable tables (assessment, evidence, claim, mitigation, entity)
+        // have been renamed to *_raw and replaced by a view under the original
+        // name. The additive CREATE INDEX / ALTER TABLE ADD COLUMN statements in
+        // this template then target a view and raise these errors. They already
+        // ran against the base table on the first boot, so skipping them is safe.
+        if (
+          msg.includes('cannot create index on relation') ||
+          msg.includes('ADD COLUMN cannot be performed on relation')
+        ) {
+          continue;
+        }
         // Diagnostic: wrap the error with the offending statement so tests
         // report which statement blew up rather than just "syntax error
         // near 'a'".
@@ -986,7 +1149,50 @@ export async function runMigrations(): Promise<void> {
   // helpers can recognise it.
   await installAuditLogImmutabilityTrigger(db);
 
+  // Soft-delete: rename each deletable base table to <t>_raw, add deleted_at,
+  // and expose a filtered view under the original name. Runs after all base
+  // tables (and their FKs) exist so the rename is FK-safe. Idempotent.
+  await installSoftDeleteViews(db);
+
   logger.info('Database migrations completed');
+}
+
+/**
+ * Install the soft-delete view layer for the deletable top-level resources.
+ *
+ * For each table T: add a nullable deleted_at, rename T -> T_raw (FKs follow
+ * the table by OID, so children stay intact), add a partial index for the
+ * "not deleted" filter, then create a view named T that selects only rows
+ * where deleted_at IS NULL. Every existing `selectFrom('T')` and join to T
+ * then transparently excludes soft-deleted rows — no per-query filter, and
+ * no way for a future query to forget one. Writes pass through the
+ * auto-updatable view; restore and purge target T_raw directly.
+ *
+ * The guard (table_type = 'BASE TABLE') makes this a no-op on every boot
+ * after the first, when T is already a view.
+ */
+export async function installSoftDeleteViews(db: ReturnType<typeof getDatabase>): Promise<void> {
+  const tables = ['assessment', 'evidence', 'claim', 'mitigation', 'entity'];
+  for (const t of tables) {
+    const sqlStmt = `DO $sd$ BEGIN
+      IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = '${t}' AND table_type = 'BASE TABLE') THEN
+        ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+        ALTER TABLE ${t} RENAME TO ${t}_raw;
+        CREATE INDEX IF NOT EXISTS idx_${t}_not_deleted ON ${t}_raw(id) WHERE deleted_at IS NULL;
+        CREATE VIEW ${t} AS SELECT * FROM ${t}_raw WHERE deleted_at IS NULL;
+      END IF;
+    END $sd$;`;
+    try {
+      await db.executeQuery({
+        sql: sqlStmt,
+        parameters: [],
+        // biome-ignore lint/suspicious/noExplicitAny: Kysely executeQuery requires CompiledQuery
+      } as any);
+    } catch (error: unknown) {
+      const msg = (error as { message?: string } | null)?.message ?? '';
+      throw new Error(`Failed to install soft-delete view for '${t}': ${msg}`);
+    }
+  }
 }
 
 async function installAuditLogImmutabilityTrigger(db: ReturnType<typeof getDatabase>): Promise<void> {

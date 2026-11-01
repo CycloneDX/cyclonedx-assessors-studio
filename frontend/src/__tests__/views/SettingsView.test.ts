@@ -1,243 +1,170 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import axios from 'axios'
+
+const { pushSpy } = vi.hoisted(() => ({ pushSpy: vi.fn(() => Promise.resolve()) }))
 
 vi.mock('vue-router', async () => {
   const { createVueRouterMock } = await import('@/__tests__/helpers/vueRouterMock')
-  return createVueRouterMock()
+  return createVueRouterMock({
+    route: { path: '/settings' },
+    router: () => ({ push: pushSpy, replace: vi.fn() }),
+  })
 })
 
 vi.mock('vue-i18n', () => ({
-  useI18n: vi.fn(() => ({ t: (key: string) => key })),
-  createI18n: vi.fn(() => ({ global: { t: (k: string) => k }, install: vi.fn() }))
+  useI18n: vi.fn(() => ({ t: (key: string) => key, locale: { value: 'en-US' } })),
+  createI18n: vi.fn(() => ({ global: { t: (k: string) => k, locale: { value: 'en-US' } }, install: vi.fn() })),
 }))
 
-vi.mock('axios', () => {
-  const mockAxiosInstance = {
-    get: vi.fn().mockResolvedValue({ data: { data: [] } }),
-    post: vi.fn().mockResolvedValue({ data: {} }),
-    put: vi.fn().mockResolvedValue({ data: {} }),
-    delete: vi.fn().mockResolvedValue({ data: {} }),
-    interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
-  }
-  return { default: { ...mockAxiosInstance, create: vi.fn(() => mockAxiosInstance) } }
-})
+vi.mock('@/api/client', () => ({
+  default: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
+}))
+
+// The password policy store fetches via @/api/auth; pin the server bounds.
+vi.mock('@/api/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/auth')>()),
+  getPasswordPolicy: vi.fn().mockResolvedValue({ minLength: 12, maxLength: 128 }),
+}))
 
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
-  ElMessageBox: { confirm: vi.fn() }
+  ElMessageBox: { confirm: vi.fn() },
 }))
 
-const ElStubs = {
-  ElButton: { template: '<button @click="$emit(\'click\')"><slot /></button>', props: ['type', 'loading'] },
-  ElForm: { template: '<form><slot /></form>' },
-  ElFormItem: { template: '<div class="form-item"><slot /></div>', props: ['label'] },
-  ElInput: { template: '<input />', props: ['modelValue', 'placeholder', 'disabled', 'type'] },
-  ElAlert: { template: '<div class="alert"><slot /></div>', props: ['type', 'closable'] },
-  ElCard: { template: '<div class="card"><slot /><slot name="header" /></div>' },
-  ElDivider: { template: '<hr />' },
-  ElIcon: { template: '<i><slot /></i>' },
-  PageHeader: { template: '<div class="page-header"><slot name="actions" /></div>', props: ['title'] },
+import SettingsView from '@/views/SettingsView.vue'
+import client from '@/api/client'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
+
+const VALID = 'Str0ng-Passw0rd!'
+
+function mountView() {
+  return mount(SettingsView, { shallow: true })
 }
-
-const SettingsView = {
-  template: `
-    <div class="settings-container">
-      <PageHeader :title="'settings.title'" />
-      <div class="settings-content">
-        <!-- Profile Section -->
-        <el-card class="profile-section">
-          <template #header>
-            <h3>Profile</h3>
-          </template>
-          <el-form>
-            <el-form-item label="Display Name">
-              <el-input v-model="profile.displayName" placeholder="Your display name" />
-            </el-form-item>
-            <el-form-item label="Username">
-              <el-input v-model="profile.username" disabled />
-            </el-form-item>
-            <el-form-item label="Email">
-              <el-input v-model="profile.email" disabled />
-            </el-form-item>
-            <el-button type="primary" @click="saveProfile">Save Profile</el-button>
-          </el-form>
-        </el-card>
-
-        <!-- Password Section -->
-        <el-card class="password-section">
-          <template #header>
-            <h3>Change Password</h3>
-          </template>
-          <el-form>
-            <el-form-item label="Current Password">
-              <el-input v-model="password.current" type="password" />
-            </el-form-item>
-            <el-form-item label="New Password">
-              <el-input v-model="password.new" type="password" />
-            </el-form-item>
-            <el-form-item label="Confirm Password">
-              <el-input v-model="password.confirm" type="password" />
-            </el-form-item>
-            <el-button type="primary" @click="changePassword">Change Password</el-button>
-          </el-form>
-        </el-card>
-
-        <!-- Notifications Section -->
-        <el-card class="notifications-section">
-          <template #header>
-            <h3>Notification Settings</h3>
-          </template>
-          <p>Notification preferences would appear here</p>
-        </el-card>
-
-        <!-- Appearance Section -->
-        <el-card class="appearance-section">
-          <template #header>
-            <h3>Appearance</h3>
-          </template>
-          <p>Appearance settings would appear here</p>
-        </el-card>
-      </div>
-    </div>
-  `,
-  props: {},
-  setup() {
-    const profile = ref({
-      displayName: 'Test User',
-      username: 'testuser',
-      email: 'test@example.com'
-    })
-
-    const password = ref({
-      current: '',
-      new: '',
-      confirm: ''
-    })
-
-    const saveProfile = async () => {
-      try {
-        await axios.post('/api/v1/profile', profile.value)
-      } catch (err: any) {
-        console.error('Failed to save profile')
-      }
-    }
-
-    const changePassword = async () => {
-      try {
-        await axios.post('/api/v1/password', {
-          currentPassword: password.value.current,
-          newPassword: password.value.new
-        })
-      } catch (err: any) {
-        console.error('Failed to change password')
-      }
-    }
-
-    return {
-      profile,
-      password,
-      saveProfile,
-      changePassword
-    }
-  }
-}
-
-import { ref } from 'vue'
 
 describe('SettingsView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    vi.mocked(client.get).mockResolvedValue({ data: { rules: [] } })
+    vi.mocked(client.put).mockResolvedValue({ data: {} })
+    vi.mocked(client.post).mockResolvedValue({ data: {} })
   })
 
-  it('renders PageHeader', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
-    })
-
-    expect(wrapper.find('.page-header').exists()).toBe(true)
+  it('loads the user notification rules on mount', async () => {
+    mountView()
+    await flushPromises()
+    expect(client.get).toHaveBeenCalledWith('/notification-rules')
   })
 
-  it('shows profile section', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
+  describe('change password', () => {
+    it('requires the current password', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.passwordForm = { currentPassword: '', newPassword: VALID, confirmPassword: VALID }
+      await wrapper.vm.handleChangePassword()
+      expect(ElMessage.error).toHaveBeenCalledWith('settings.currentPasswordRequired')
+      expect(client.put).not.toHaveBeenCalled()
     })
 
-    expect(wrapper.find('.profile-section').exists()).toBe(true)
+    it('rejects a new password below the policy minimum', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.passwordForm = { currentPassword: 'old', newPassword: 'short', confirmPassword: 'short' }
+      await wrapper.vm.handleChangePassword()
+      expect(ElMessage.error).toHaveBeenCalledWith('settings.passwordTooShort')
+      expect(client.put).not.toHaveBeenCalled()
+    })
+
+    it('rejects a confirmation that does not match', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.passwordForm = { currentPassword: 'old', newPassword: VALID, confirmPassword: VALID + 'x' }
+      await wrapper.vm.handleChangePassword()
+      expect(ElMessage.error).toHaveBeenCalledWith('settings.passwordMismatch')
+      expect(client.put).not.toHaveBeenCalled()
+    })
+
+    it('sends only current and new password, then clears the form', async () => {
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.passwordForm = { currentPassword: 'old-pass', newPassword: VALID, confirmPassword: VALID }
+      await wrapper.vm.handleChangePassword()
+      expect(client.put).toHaveBeenCalledWith('/auth/change-password', {
+        currentPassword: 'old-pass',
+        newPassword: VALID,
+      })
+      expect(ElMessage.success).toHaveBeenCalledWith('settings.passwordChanged')
+      expect(wrapper.vm.passwordForm).toEqual({ currentPassword: '', newPassword: '', confirmPassword: '' })
+    })
+
+    // The server answers a wrong current password with 400 (not 401), so
+    // the user stays signed in, sees the message, and keeps their input.
+    it('shows the server message on a wrong current password and keeps the user here', async () => {
+      vi.mocked(client.put).mockRejectedValueOnce({
+        response: { status: 400, data: { error: 'Current password is incorrect' } },
+      })
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.passwordForm = { currentPassword: 'typo', newPassword: VALID, confirmPassword: VALID }
+      await wrapper.vm.handleChangePassword()
+      expect(ElMessage.error).toHaveBeenCalledWith('Current password is incorrect')
+      expect(wrapper.vm.passwordForm.newPassword).toBe(VALID)
+      expect(wrapper.vm.savingPassword).toBe(false)
+      expect(pushSpy).not.toHaveBeenCalled()
+    })
   })
 
-  it('shows password change section', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
+  describe('profile', () => {
+    it('saves only the display name and updates the signed-in user', async () => {
+      const authStore = useAuthStore()
+      authStore.user = { id: 'u1', username: 'jdoe', email: 'j@example.test', displayName: 'Old' } as typeof authStore.user
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.profileForm.displayName = 'New Name'
+      await wrapper.vm.handleSaveProfile()
+      expect(client.put).toHaveBeenCalledWith('/auth/profile', { displayName: 'New Name' })
+      expect(authStore.user?.displayName).toBe('New Name')
     })
 
-    expect(wrapper.find('.password-section').exists()).toBe(true)
+    it('surfaces a server error without changing the signed-in user', async () => {
+      const authStore = useAuthStore()
+      authStore.user = { id: 'u1', username: 'jdoe', email: 'j@example.test', displayName: 'Old' } as typeof authStore.user
+      vi.mocked(client.put).mockRejectedValueOnce({ response: { data: { error: 'Display name too long' } } })
+      const wrapper = mountView()
+      await flushPromises()
+      wrapper.vm.profileForm.displayName = 'x'.repeat(500)
+      await wrapper.vm.handleSaveProfile()
+      expect(ElMessage.error).toHaveBeenCalledWith('Display name too long')
+      expect(authStore.user?.displayName).toBe('Old')
+    })
   })
 
-  it('has display name field', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
+  describe('log out all sessions', () => {
+    it('does nothing when the confirmation is cancelled', async () => {
+      vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel')
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.vm.handleLogoutAll()
+      expect(client.post).not.toHaveBeenCalledWith('/auth/logout-all')
+      expect(ElMessage.error).not.toHaveBeenCalled()
+      expect(pushSpy).not.toHaveBeenCalled()
     })
 
-    const inputs = wrapper.findAll('input')
-    expect(inputs.length).toBeGreaterThan(0)
-  })
-
-  it('disables username field', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
+    it('revokes every session and returns to login when confirmed', async () => {
+      vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce('confirm' as never)
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.vm.handleLogoutAll()
+      expect(client.post).toHaveBeenCalledWith('/auth/logout-all')
+      expect(pushSpy).toHaveBeenCalledWith('/login')
     })
-
-    // Check that the ElInput components with disabled prop exist
-    const elInputs = wrapper.findAll('input')
-    expect(elInputs.length).toBeGreaterThan(0)
-    // Verify component state has the profile data
-    expect(wrapper.vm.profile.username).toBe('testuser')
-  })
-
-  it('disables email field', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
-    })
-
-    // Verify that both username and email fields exist in component state
-    expect(wrapper.vm.profile.username).toBe('testuser')
-    expect(wrapper.vm.profile.email).toBe('test@example.com')
-  })
-
-  it('shows notification settings section', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
-    })
-
-    expect(wrapper.find('.notifications-section').exists()).toBe(true)
-  })
-
-  it('shows appearance section', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
-    })
-
-    expect(wrapper.find('.appearance-section').exists()).toBe(true)
-  })
-
-  it('has save profile button', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
-    })
-
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some(btn => btn.text().includes('Save Profile'))).toBe(true)
-  })
-
-  it('has change password button', () => {
-    const wrapper = mount(SettingsView, {
-      global: { stubs: ElStubs }
-    })
-
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some(btn => btn.text().includes('Change Password'))).toBe(true)
   })
 })

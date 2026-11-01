@@ -3,14 +3,14 @@ import { mount } from '@vue/test-utils'
 import TagInput from '@/components/shared/TagInput.vue'
 import { nextTick } from 'vue'
 
-// Mock axios
-vi.mock('axios', () => ({
+// Mock the shared API client
+vi.mock('@/api/client', () => ({
   default: {
     get: vi.fn()
   }
 }))
 
-import axios from 'axios'
+import client from '@/api/client'
 
 describe('TagInput.vue', () => {
   beforeEach(() => {
@@ -425,7 +425,7 @@ describe('TagInput.vue', () => {
 
   describe('suggestions', () => {
     it('should show suggestions dropdown when input has value', async () => {
-      vi.mocked(axios.get).mockResolvedValue({
+      vi.mocked(client.get).mockResolvedValue({
         data: { data: ['suggestion1', 'suggestion2'] }
       })
 
@@ -447,7 +447,7 @@ describe('TagInput.vue', () => {
     })
 
     it('should filter out already-added tags from suggestions', async () => {
-      vi.mocked(axios.get).mockResolvedValue({
+      vi.mocked(client.get).mockResolvedValue({
         data: { data: ['tag1', 'tag2', 'tag3'] }
       })
 
@@ -484,6 +484,7 @@ describe('TagInput.vue', () => {
   })
 
   describe('suggestion selection', () => {
+    // Suggestions select on mousedown (not click) so the input doesn't blur first
     it('should add tag when suggestion is clicked', async () => {
       const wrapper = mount(TagInput, {
         props: {
@@ -497,7 +498,7 @@ describe('TagInput.vue', () => {
       await nextTick()
 
       const suggestion = wrapper.find('.suggestion-item')
-      await suggestion.trigger('click')
+      await suggestion.trigger('mousedown')
       await nextTick()
 
       expect(wrapper.emitted('update:modelValue')).toBeTruthy()
@@ -516,7 +517,7 @@ describe('TagInput.vue', () => {
       await nextTick()
 
       const suggestion = wrapper.find('.suggestion-item')
-      await suggestion.trigger('click')
+      await suggestion.trigger('mousedown')
       await nextTick()
 
       expect(wrapper.vm.inputText).toBe('')
@@ -534,7 +535,7 @@ describe('TagInput.vue', () => {
       await nextTick()
 
       const suggestion = wrapper.find('.suggestion-item')
-      await suggestion.trigger('click')
+      await suggestion.trigger('mousedown')
       await nextTick()
 
       expect(wrapper.vm.showSuggestions).toBe(false)

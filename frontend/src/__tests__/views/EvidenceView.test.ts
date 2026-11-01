@@ -185,7 +185,7 @@ describe('EvidenceView.vue', () => {
     it('should render the evidence container', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.find('.evidence-container').exists()).toBe(true)
+      expect(wrapper.find('.ev-page').exists()).toBe(true)
     })
 
     it('should render PageHeader component', async () => {
@@ -198,7 +198,7 @@ describe('EvidenceView.vue', () => {
     it('should render filter bar', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.find('.filter-bar').exists()).toBe(true)
+      expect(wrapper.find('.ev-toolbar').exists()).toBe(true)
     })
 
     it('should render evidence table', async () => {
@@ -230,7 +230,7 @@ describe('EvidenceView.vue', () => {
       })
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.find('.empty-state-contextual').exists()).toBe(true)
+      expect(wrapper.find('.ev-empty').exists()).toBe(true)
     })
 
     it('should show create button in empty state', async () => {
@@ -239,7 +239,7 @@ describe('EvidenceView.vue', () => {
       })
       const wrapper = mountView()
       await flushPromises()
-      const emptyState = wrapper.find('.empty-state-contextual')
+      const emptyState = wrapper.find('.ev-empty')
       expect(emptyState.exists()).toBe(true)
     })
 
@@ -279,13 +279,19 @@ describe('EvidenceView.vue', () => {
     it('should have state filter', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.filterState).toBeDefined()
+      expect(wrapper.vm.hasFilters).toBe(false)
+      wrapper.vm.stateFilter = 'in_review'
+      await nextTick()
+      expect(wrapper.vm.hasFilters).toBe(true)
     })
 
     it('should have search input', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.searchText).toBeDefined()
+      wrapper.vm.searchText = 'TEST EVIDENCE'
+      await nextTick()
+      // case-insensitive match on the name
+      expect(wrapper.vm.filteredEvidence).toHaveLength(1)
     })
   })
 
@@ -293,43 +299,53 @@ describe('EvidenceView.vue', () => {
     it('should filter by state', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.filterState = 'in_review'
+      wrapper.vm.stateFilter = 'claimed'
       await nextTick()
-      expect(wrapper.vm.filterState).toBe('in_review')
+      expect(wrapper.vm.filteredEvidence).toHaveLength(0)
+
+      wrapper.vm.stateFilter = 'in_review'
+      await nextTick()
+      expect(wrapper.vm.filteredEvidence).toHaveLength(1)
     })
 
     it('should search by text', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.searchText = 'Test'
+      wrapper.vm.searchText = 'no such evidence'
       await nextTick()
-      expect(wrapper.vm.searchText).toBe('Test')
+      expect(wrapper.vm.filteredEvidence).toHaveLength(0)
+
+      // Search is case-insensitive and also matches the author name
+      wrapper.vm.searchText = 'test author'
+      await nextTick()
+      expect(wrapper.vm.filteredEvidence).toHaveLength(1)
     })
 
     it('should apply multiple filters', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.filterState = 'in_review'
+      wrapper.vm.stateFilter = 'in_review'
       wrapper.vm.searchText = 'Test'
       await nextTick()
-
-      expect(wrapper.vm.filterState).toBe('in_review')
-      expect(wrapper.vm.searchText).toBe('Test')
+      expect(wrapper.vm.filteredEvidence).toHaveLength(1)
+      // Both filters must match: same search, different state excludes it
+      wrapper.vm.stateFilter = 'claimed'
+      await nextTick()
+      expect(wrapper.vm.filteredEvidence).toHaveLength(0)
     })
 
     it('should clear filters', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.filterState = 'in_review'
-      wrapper.vm.searchText = 'Test'
+      wrapper.vm.stateFilter = 'claimed'
+      wrapper.vm.searchText = 'nothing matches this'
       await nextTick()
-
-      wrapper.vm.filterState = ''
-      wrapper.vm.searchText = ''
+      expect(wrapper.vm.filteredEvidence).toHaveLength(0)
+      wrapper.vm.clearFilters()
       await nextTick()
-
-      expect(wrapper.vm.filterState).toBe('')
+      expect(wrapper.vm.stateFilter).toBe('')
       expect(wrapper.vm.searchText).toBe('')
+      expect(wrapper.vm.filteredEvidence).toHaveLength(1)
     })
   })
 
@@ -337,27 +353,37 @@ describe('EvidenceView.vue', () => {
     it('should open create dialog on button click', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.showCreateDialog = true
+      wrapper.vm.form.name = 'left over from last time'
+      wrapper.vm.openCreate()
       await nextTick()
-      expect(wrapper.vm.showCreateDialog).toBe(true)
+      expect(wrapper.vm.showCreate).toBe(true)
+      expect(wrapper.vm.form.name).toBe('')
     })
 
     it('should close create dialog', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.showCreateDialog = true
-      await nextTick()
-
-      wrapper.vm.showCreateDialog = false
-      await nextTick()
-
-      expect(wrapper.vm.showCreateDialog).toBe(false)
+      wrapper.vm.openCreate()
+      wrapper.vm.form.name = 'New evidence'
+      wrapper.vm.form.reviewerId = 'reviewer1'
+      vi.mocked(axios.post).mockResolvedValueOnce({ data: { id: 'new' } })
+      await wrapper.vm.handleCreate()
+      await flushPromises()
+      expect(axios.post).toHaveBeenCalledWith('/evidence', expect.objectContaining({ name: 'New evidence', reviewerId: 'reviewer1' }))
+      expect(wrapper.vm.showCreate).toBe(false)
     })
 
     it('should have create form fields', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.createForm).toBeDefined()
+      wrapper.vm.openCreate()
+      // Name and reviewer are required; nothing is sent without them
+      await wrapper.vm.handleCreate()
+      expect(wrapper.vm.formErrors.name).toBeTruthy()
+      wrapper.vm.form.name = 'Has a name'
+      await wrapper.vm.handleCreate()
+      expect(wrapper.vm.formErrors.reviewerId).toBeTruthy()
+      expect(axios.post).not.toHaveBeenCalled()
     })
   })
 
@@ -365,11 +391,9 @@ describe('EvidenceView.vue', () => {
     it('should navigate to evidence on row click', async () => {
       const wrapper = mountView()
       await flushPromises()
-
-      const row = { id: '1', name: 'Test Evidence' }
-      expect(wrapper.vm.navigateToEvidence).toBeDefined()
-
-      expect(wrapper.vm).toBeDefined()
+      const { useRouter } = await import('vue-router')
+      wrapper.vm.navigateTo({ id: '1', name: 'Test Evidence' })
+      expect(useRouter().push).toHaveBeenCalledWith('/evidence/1')
     })
 
     it('should handle table data property', async () => {
@@ -384,16 +408,20 @@ describe('EvidenceView.vue', () => {
     it('should render pagination component', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.totalEvidence).toBeDefined()
-      expect(wrapper.vm.totalEvidence).toBeGreaterThanOrEqual(0)
+      expect(wrapper.vm.filteredEvidence).toBeDefined()
+      expect(wrapper.vm.filteredEvidence.length).toBeGreaterThanOrEqual(0)
     })
 
     it('should update current page', async () => {
       const wrapper = mountView()
       await flushPromises()
+      wrapper.vm.pageSize = 1
+      wrapper.vm.currentPage = 1
+      await nextTick()
+      expect(wrapper.vm.pagedEvidence).toHaveLength(1)
       wrapper.vm.currentPage = 2
       await nextTick()
-      expect(wrapper.vm.currentPage).toBe(2)
+      expect(wrapper.vm.pagedEvidence).toHaveLength(0)
     })
 
     it('should display page size', async () => {
@@ -405,7 +433,7 @@ describe('EvidenceView.vue', () => {
     it('should display total count', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.totalEvidence).toBeGreaterThanOrEqual(0)
+      expect(wrapper.vm.filteredEvidence.length).toBe(wrapper.vm.evidence.length)
     })
   })
 
@@ -441,20 +469,20 @@ describe('EvidenceView.vue', () => {
       vi.mocked(axios.get).mockRejectedValue(new Error('Network error'))
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.error = 'Failed to load evidence'
-      await nextTick()
-      expect(wrapper.vm.error).toBeTruthy()
+      expect(wrapper.vm.loadError).toBeTruthy()
+      expect(wrapper.find('.alert').exists()).toBe(true)
     })
 
     it('should allow closing error alert', async () => {
+      vi.mocked(axios.get).mockRejectedValueOnce({ response: { status: 500, data: { error: 'boom' } } })
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.error = 'Test error'
-      await nextTick()
-
-      wrapper.vm.error = ''
-      await nextTick()
-      expect(wrapper.vm.error).toBe('')
+      expect(wrapper.vm.loadError).toBeTruthy()
+      // A successful refetch clears the error
+      await wrapper.vm.fetchEvidence()
+      await flushPromises()
+      expect(wrapper.vm.loadError).toBe('')
+      expect(wrapper.vm.evidence).toHaveLength(1)
     })
   })
 
@@ -496,15 +524,21 @@ describe('EvidenceView.vue', () => {
     it('should display created date', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.evidence).toBeDefined()
-      expect(wrapper.vm.evidence[0].createdAt).toBeDefined()
+      const inTenDays = new Date(Date.now() + 10 * 86400000).toISOString()
+      const inSixtyDays = new Date(Date.now() + 60 * 86400000).toISOString()
+      expect(wrapper.vm.isExpiringSoon(inTenDays)).toBe(true)
+      expect(wrapper.vm.isExpiringSoon(inSixtyDays)).toBe(false)
+      expect(wrapper.vm.isExpiringSoon(null)).toBe(false)
     })
 
     it('should display expiration date', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.evidence).toBeDefined()
-      expect(wrapper.vm.evidence[0].expiresOn).toBeDefined()
+      const yesterday = new Date(Date.now() - 86400000).toISOString()
+      const inTenDays = new Date(Date.now() + 10 * 86400000).toISOString()
+      expect(wrapper.vm.expiryClass(yesterday)).toBe('ev-expired')
+      expect(wrapper.vm.expiryClass(inTenDays)).toBe('ev-expiring')
+      expect(wrapper.vm.expiryClass(null)).toBe('')
     })
   })
 
@@ -517,27 +551,37 @@ describe('EvidenceView.vue', () => {
     })
 
     it('should maintain error state', async () => {
+      vi.mocked(axios.get).mockRejectedValueOnce({ response: { status: 500, data: { error: 'boom' } } })
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.error = 'Test error'
-      await nextTick()
-      expect(wrapper.vm.error).toBe('Test error')
+      expect(wrapper.vm.loadError).toBeTruthy()
+      expect(wrapper.vm.evidence).toEqual([])
+      expect(wrapper.vm.loading).toBe(false)
     })
 
     it('should maintain filter state', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.filterState = 'in_review'
-      await nextTick()
-      expect(wrapper.vm.filterState).toBe('in_review')
+      // Sorting: same field toggles direction, a new field starts ascending
+      wrapper.vm.sortBy('name')
+      expect(wrapper.vm.sortField).toBe('name')
+      expect(wrapper.vm.sortDir).toBe('asc')
+      wrapper.vm.sortBy('name')
+      expect(wrapper.vm.sortDir).toBe('desc')
     })
 
     it('should maintain create dialog state', async () => {
       const wrapper = mountView()
       await flushPromises()
-      wrapper.vm.showCreateDialog = true
-      await nextTick()
-      expect(wrapper.vm.showCreateDialog).toBe(true)
+      wrapper.vm.openCreate()
+      wrapper.vm.form.name = 'Will fail'
+      wrapper.vm.form.reviewerId = 'reviewer1'
+      vi.mocked(axios.post).mockRejectedValueOnce({ response: { status: 400, data: { error: 'Bad' } } })
+      await wrapper.vm.handleCreate()
+      await flushPromises()
+      // A failed create keeps the dialog open with the user's input
+      expect(wrapper.vm.showCreate).toBe(true)
+      expect(wrapper.vm.form.name).toBe('Will fail')
     })
   })
 
@@ -545,7 +589,41 @@ describe('EvidenceView.vue', () => {
     it('should have filteredEvidence computed property', async () => {
       const wrapper = mountView()
       await flushPromises()
-      expect(wrapper.vm.filteredEvidence).toBeDefined()
+      wrapper.vm.typeFilter = 'counter_evidence'
+      await nextTick()
+      // The fixture is proof, not counter evidence
+      expect(wrapper.vm.filteredEvidence).toHaveLength(0)
+      wrapper.vm.typeFilter = 'proof'
+      await nextTick()
+      expect(wrapper.vm.filteredEvidence).toHaveLength(1)
+    })
+  })
+
+  describe('type column', () => {
+    // Rows saved before the `type` column existed (and the demo seed) have
+    // type null. They used to render a bare dash although the type filter
+    // already counted them as proof.
+    it('shows a Proof badge for untyped evidence, and agrees with the filter', async () => {
+      const row = { state: 'in_review', authorName: 'A', createdAt: '2026-01-01', assessmentCount: 0 }
+      vi.mocked(axios.get).mockResolvedValue({
+        data: {
+          data: [
+            { ...row, id: '1', name: 'Untyped proof', type: null, isCounterEvidence: false },
+            { ...row, id: '2', name: 'Untyped counter', type: null, isCounterEvidence: true },
+            { ...row, id: '3', name: 'Typed', type: 'mitigation_strategy', isCounterEvidence: false },
+          ],
+          total: 3,
+        },
+      })
+      const wrapper = mountView()
+      await flushPromises()
+      const badges = wrapper.findAll('.ev-type-badge').map((b) => b.text())
+      expect(badges).toEqual(['Proof', 'Counter Evidence', 'Mitigation Strategy'])
+      expect(wrapper.find('.ev-type-muted').exists()).toBe(false)
+
+      wrapper.vm.typeFilter = 'proof'
+      await nextTick()
+      expect(wrapper.vm.filteredEvidence.map((e: { id: string }) => e.id)).toEqual(['1'])
     })
   })
 

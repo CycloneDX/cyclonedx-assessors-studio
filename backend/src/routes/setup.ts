@@ -12,10 +12,15 @@ import { logger } from '../utils/logger.js';
 import { checkSetupComplete, markSetupComplete, requireSetupOr } from '../middleware/setup.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { importStandard } from '../services/standard-import.js';
-import { asyncHandler } from '../utils/route-helpers.js';
+import { parseBody } from '../utils/route-helpers.js';
 import { buildSessionCookieOptions } from '../utils/cookies.js';
 import { getPermissionsForRole, type AuthRequest } from '../middleware/auth.js';
 import { logAudit } from '../utils/audit.js';
+import { isValidSetupToken } from '../utils/setup-token.js';
+import { sql } from 'kysely';
+
+// Arbitrary constant key for pg_advisory_xact_lock around first-admin creation.
+const SETUP_ADVISORY_LOCK = 4_242_001;
 
 const router = Router();
 const config = getConfig();
@@ -149,6 +154,16 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       return;
     }
 
+    // First-run gate: the caller must show the setup token from the
+    // server log or configuration (security review W3/A12).
+    if (!isValidSetupToken((req.body as { setupToken?: unknown } | undefined)?.setupToken)) {
+      res.status(403).json({
+        error: 'Invalid setup token',
+        message: 'Enter the setup token shown in the server log (or SETUP_TOKEN from your configuration).',
+      });
+      return;
+    }
+
     const data = setupSchema.parse(req.body);
     const db = getDatabase();
 
@@ -176,7 +191,20 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
     const sessionId = uuidv4();
     const sessionExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
+    let alreadySetUp = false;
     await db.transaction().execute(async (trx) => {
+      // Serialize concurrent setups and re-check inside the lock, so two
+      // simultaneous requests cannot both create an admin.
+      await sql`SELECT pg_advisory_xact_lock(${SETUP_ADVISORY_LOCK})`.execute(trx);
+      const existing = await trx
+        .selectFrom('app_user')
+        .select(trx.fn.count<number>('id').as('count'))
+        .executeTakeFirstOrThrow();
+      if (Number(existing.count) > 0) {
+        alreadySetUp = true;
+        return;
+      }
+
       await trx
         .insertInto('app_user')
         .values(toSnakeCase({
@@ -202,6 +230,13 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
         })
         .execute();
     });
+    if (alreadySetUp) {
+      res.status(403).json({
+        error: 'Setup already completed',
+        message: 'An administrator account already exists. This endpoint is no longer available.',
+      });
+      return;
+    }
 
     markSetupComplete();
 
@@ -209,6 +244,7 @@ router.post('/', async (req: AuthRequest, res: Response): Promise<void> => {
       { sessionId },
       config.JWT_SECRET,
       {
+        algorithm: 'HS256',
         expiresIn: config.JWT_EXPIRY,
       } as jwt.SignOptions,
     );
@@ -315,7 +351,9 @@ router.get('/standards-feed', requireSetupOr('standards.import'), async (__req: 
  */
 router.post('/import-standard', requireSetupOr('standards.import'), async (req: Request, res: Response): Promise<void> => {
   try {
-    const { url, title } = req.body;
+    const body = parseBody(z.object({ url: z.string().url().max(2048), title: z.string().max(500).optional() }), req.body, res);
+    if (!body) return;
+    const { url, title } = body;
     if (!url || typeof url !== 'string') {
       res.status(400).json({ error: 'A valid URL is required' });
       return;
@@ -379,10 +417,20 @@ router.post('/import-standard', requireSetupOr('standards.import'), async (req: 
  * Seeds the database with comprehensive demo data.
  * Only available during/after setup. Requires that admin and standards exist.
  */
-router.post('/seed-demo', requireSetupOr('admin.settings'), async (__req: Request, res: Response): Promise<void> => {
+router.post('/seed-demo', requireSetupOr('admin.settings'), async (req: Request, res: Response): Promise<void> => {
   try {
+    // Demo users can sign in only when the operator supplies a password,
+    // and it must pass the normal policy (security review A1).
+    const demoUserPassword = (req.body as { demoUserPassword?: unknown } | undefined)?.demoUserPassword;
+    if (demoUserPassword !== undefined) {
+      const policy = await validatePasswordPolicy(demoUserPassword);
+      if (!policy.valid) {
+        res.status(400).json({ error: policy.reason ?? 'Demo user password does not meet the password policy' });
+        return;
+      }
+    }
     const { seedDemoData } = await import('../db/seed-demo.js');
-    const seeded = await seedDemoData();
+    const seeded = await seedDemoData({ userPassword: demoUserPassword as string | undefined });
 
     if (seeded) {
       logger.info('Demo data seeded via setup wizard');

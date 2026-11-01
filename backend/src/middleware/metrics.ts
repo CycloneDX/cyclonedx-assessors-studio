@@ -21,7 +21,7 @@ import {
  * falls back to the base path. Unmatched paths (404s) are grouped under
  * "unmatched" to prevent label cardinality explosion.
  */
-export function normalizeRoute(req: Request, res: Response): string {
+function normalizeRoute(req: Request, res: Response): string {
   // If Express matched a route, use the full mounted path + route pattern
   if (req.route?.path) {
     const basePath = req.baseUrl || '';

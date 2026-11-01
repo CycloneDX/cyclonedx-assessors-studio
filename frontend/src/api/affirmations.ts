@@ -105,10 +105,6 @@ export async function updateAffirmation(
   return data.data
 }
 
-export async function deleteAffirmation(id: string): Promise<void> {
-  await client.delete(`/affirmations/${encodeURIComponent(id)}`)
-}
-
 export async function addSlot(
   id: string,
   input: { requiredTitle: string; requiredUserId?: string | null },

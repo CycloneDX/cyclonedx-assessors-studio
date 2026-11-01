@@ -101,7 +101,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import client from '@/api/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
@@ -175,7 +175,7 @@ const fetchRoles = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await axios.get('/api/v1/roles')
+    const response = await client.get('/roles')
     roles.value = response.data.data || []
     currentPage.value = 1
   } catch (err: unknown) {
@@ -187,7 +187,7 @@ const fetchRoles = async () => {
 
 const fetchPermissions = async () => {
   try {
-    const response = await axios.get('/api/v1/roles/permissions')
+    const response = await client.get('/roles/permissions')
     permissions.value = response.data.data || []
   } catch (err: unknown) {
     ElMessage.error(apiErrorMessage(err, 'Failed to fetch permissions'))
@@ -212,7 +212,7 @@ const openNewRoleDialog = async () => {
 const handleEdit = async (row: Role) => {
   loading.value = true
   try {
-    const response = await axios.get(`/api/v1/roles/${row.id}`)
+    const response = await client.get(`/roles/${row.id}`)
     const roleData = response.data.role || response.data
     const permissionIds = (response.data.permissions || []).map((p: Permission) => p.id)
 
@@ -247,7 +247,7 @@ const handleDelete = async (row: Role) => {
   ).then(async () => {
     saving.value = true
     try {
-      await axios.delete(`/api/v1/roles/${row.id}`)
+      await client.delete(`/roles/${row.id}`)
       ElMessage.success(t('admin.roleDeleted'))
       fetchRoles()
     } catch (err: unknown) {
@@ -281,10 +281,10 @@ const handleSave = async () => {
     }
 
     if (isEditing.value) {
-      await axios.put(`/api/v1/roles/${editingRoleId.value}`, payload)
+      await client.put(`/roles/${editingRoleId.value}`, payload)
       ElMessage.success(t('admin.roleUpdated'))
     } else {
-      await axios.post('/api/v1/roles', payload)
+      await client.post('/roles', payload)
       ElMessage.success(t('admin.roleCreated'))
     }
 

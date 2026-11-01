@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing: each surviving mutant on a changed path is a finding (max 7/file). Real runs scope --mutate to changed files and must carry the same test env as CI (DATABASE_PROVIDER=pglite, JWT_SECRET, etc.) because the suite boots PGlite. Backend vitest is serial (fileParallelism:false), so keep concurrency low.",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/**/*.ts",
+    "!src/**/*.{test,spec}.ts",
+    "!src/**/*.d.ts",
+    "!src/__tests__/**",
+    "!src/__mocks__/**",
+    "!src/scripts/**",
+    "!src/openapi.ts",
+    "!src/**/types.ts"
+  ],
+  "reporters": ["json", "clear-text"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "timeoutMS": 60000,
+  "concurrency": 2,
+  "tempDirName": ".stryker-tmp"
+}

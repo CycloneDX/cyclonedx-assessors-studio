@@ -127,79 +127,15 @@
       </div>
     </el-card>
 
-    <!-- Compliance Coverage + Project Health -->
-    <div class="dashboard-grid">
-      <!-- Compliance Coverage by Standard -->
-      <el-card class="dashboard-card">
-        <template #header>
-          <div class="card-header">
-            <h2 class="card-title">{{ t('dashboard.complianceCoverage') }}</h2>
-          </div>
-        </template>
-        <div v-if="coverageLoading" class="card-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
+    <!-- Claims & Mitigations Health -->
+    <el-card class="dashboard-card">
+      <template #header>
+        <div class="card-header">
+          <h2 class="card-title">Claims &amp; Mitigations</h2>
         </div>
-        <div v-else-if="complianceCoverage.length === 0" class="no-data">
-          No standards with active assessments. Import standards and create assessments to track coverage.
-        </div>
-        <div v-else class="coverage-list">
-          <div v-for="item in complianceCoverage" :key="item.standardId" class="coverage-item">
-            <div class="coverage-header">
-              <span class="coverage-name">{{ item.standardName }}</span>
-              <span class="coverage-percent">{{ item.coveragePercent }}%</span>
-            </div>
-            <el-progress
-              :percentage="item.coveragePercent"
-              :stroke-width="8"
-              :status="getProgressStatus(item.coveragePercent)"
-              :show-text="false"
-            />
-            <div class="coverage-detail">
-              {{ item.assessedRequirements }} {{ t('dashboard.ofRequirementsAssessed', { total: item.totalRequirements }) }}
-            </div>
-          </div>
-        </div>
-      </el-card>
-
-      <!-- Project Health Overview -->
-      <el-card class="dashboard-card">
-        <template #header>
-          <div class="card-header">
-            <h2 class="card-title">{{ t('dashboard.projectHealth') }}</h2>
-            <RouterLink to="/projects" class="view-all-link" aria-label="View all projects">{{ t('dashboard.viewAll') }}</RouterLink>
-          </div>
-        </template>
-        <div v-if="projectHealthLoading" class="card-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-        </div>
-        <div v-else-if="projectHealth.length === 0" class="no-data">
-          No projects available. Create a project to start tracking assessments.
-        </div>
-        <div v-else class="project-health-list">
-          <div v-for="project in projectHealth" :key="project.id" class="project-health-item">
-            <div class="project-health-header">
-              <RouterLink :to="'/projects/' + project.id" class="project-health-name">{{ project.name }}</RouterLink>
-              <span class="project-health-rate" :style="{ color: getProgressColor(project.completionRate) }">
-                {{ project.completionRate }}%
-              </span>
-            </div>
-            <el-progress
-              :percentage="project.completionRate"
-              :stroke-width="6"
-              :status="getProgressStatus(project.completionRate)"
-              :show-text="false"
-            />
-            <div class="project-health-meta">
-              <span>{{ project.completedAssessments }}/{{ project.totalAssessments }} {{ t('dashboard.assessmentsCompleted') }}</span>
-              <span v-if="project.overdueAssessments > 0" class="project-overdue">
-                {{ project.overdueAssessments }} {{ t('dashboard.assessmentsOverdueCount') }}
-              </span>
-              <span>{{ project.attestationCount }} {{ t('dashboard.attestations') }}</span>
-            </div>
-          </div>
-        </div>
-      </el-card>
-    </div>
+      </template>
+      <ClaimsMitigationsWidget />
+    </el-card>
 
     <!-- Recent Assessments Table -->
     <el-card class="dashboard-card">
@@ -234,62 +170,6 @@
       </el-table>
     </el-card>
 
-    <!-- Evidence Health + Upcoming Due Dates -->
-    <div class="dashboard-grid">
-      <!-- Evidence Health -->
-      <el-card class="dashboard-card">
-        <template #header>
-          <div class="card-header">
-            <h2 class="card-title">{{ t('dashboard.evidenceHealth') }}</h2>
-            <RouterLink to="/evidence" class="view-all-link" aria-label="View all evidence">{{ t('dashboard.viewAll') }}</RouterLink>
-          </div>
-        </template>
-        <div v-if="evidenceHealthLoading" class="card-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-        </div>
-        <div v-else class="evidence-health">
-          <div class="health-grid">
-            <div v-for="item in evidenceHealth" :key="item.state" class="health-item">
-              <div class="health-value" :style="{ color: getEvidenceHealthColor(item.state) }">{{ item.count }}</div>
-              <div class="health-label">
-                <StateBadge :state="item.state" />
-              </div>
-            </div>
-          </div>
-          <div v-if="evidenceExpiring.length > 0" class="expiring-section">
-            <h3 class="expiring-title">{{ t('dashboard.expiringWithin30') }}</h3>
-            <div v-for="item in evidenceExpiring" :key="item.id" class="expiring-item">
-              <span class="expiring-name">{{ item.name }}</span>
-              <span class="expiring-date">{{ formatDate(item.expiresOn) }}</span>
-            </div>
-          </div>
-        </div>
-      </el-card>
-
-      <!-- Upcoming Due Dates -->
-      <el-card class="dashboard-card">
-        <template #header>
-          <h2 class="card-title">{{ t('dashboard.upcomingDueDates') }}</h2>
-        </template>
-
-        <div v-if="dueDatesLoading" class="card-loading">
-          <el-icon class="is-loading"><Loading /></el-icon>
-        </div>
-
-        <div v-else class="due-dates-list">
-          <div v-if="upcomingDueDates.length === 0" class="no-data">
-            No upcoming due dates. All assessments are on schedule.
-          </div>
-          <div v-for="item in upcomingDueDates" :key="item.id" class="due-date-item">
-            <div class="due-date-content">
-              <h3 class="due-date-title">{{ item.title }}</h3>
-              <p class="due-date-meta">{{ item.projectName }} &middot; {{ formatDate(item.dueDate) }}</p>
-            </div>
-            <el-badge :value="item.daysUntilDue + 'd'" :type="getDaysLeftColor(item.daysUntilDue)" />
-          </div>
-        </div>
-      </el-card>
-    </div>
   </div>
 </template>
 
@@ -298,10 +178,11 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FolderOpened, DocumentChecked, Odometer, Loading, Warning, CircleCheckFilled } from '@element-plus/icons-vue'
 import { Chart, DoughnutController, ArcElement, Tooltip, Legend, BarController, BarElement, CategoryScale, LinearScale } from 'chart.js'
-import axios from 'axios'
+import client from '@/api/client'
 import type { Assessment } from '@/types'
 import StatCard from '@/components/shared/StatCard.vue'
 import StateBadge from '@/components/shared/StateBadge.vue'
+import ClaimsMitigationsWidget from '@/components/dashboard/widgets/ClaimsMitigationsWidget.vue'
 
 Chart.register(DoughnutController, ArcElement, Tooltip, Legend, BarController, BarElement, CategoryScale, LinearScale)
 
@@ -317,13 +198,9 @@ let pipelineChartInstance: Chart | null = null
 const error = ref('')
 const statsLoading = ref(true)
 const assessmentsLoading = ref(true)
-const dueDatesLoading = ref(true)
-const coverageLoading = ref(true)
 const distributionLoading = ref(true)
-const evidenceHealthLoading = ref(true)
 const conformanceLoading = ref(true)
 const riskInsightsLoading = ref(true)
-const projectHealthLoading = ref(true)
 
 const stats = ref({
   totalProjects: 0,
@@ -340,23 +217,13 @@ const stats = ref({
   completionRate: 0,
 })
 
-interface DueDateItem { id: string; title: string; projectName: string; dueDate: string; daysUntilDue: number }
-interface CoverageItem { standardId: string; standardName: string; coveragePercent: number; assessedRequirements: number; totalRequirements: number }
 interface DistributionItem { state: string; count: number; label?: string }
 interface ConformanceItem { result: string; count: number }
-interface HealthItem { state: string; count: number }
-interface ExpiringItem { id: string; name: string; expiresOn: string }
 interface RiskInsight { severity: string; type: string; title: string; detail: string }
-interface ProjectHealthItem { id: string; name: string; completionRate: number; completedAssessments: number; totalAssessments: number; overdueAssessments: number; attestationCount: number }
 
 const recentAssessments = ref<Assessment[]>([])
-const upcomingDueDates = ref<DueDateItem[]>([])
-const complianceCoverage = ref<CoverageItem[]>([])
 const assessmentDistribution = ref<DistributionItem[]>([])
-const evidenceHealth = ref<HealthItem[]>([])
-const evidenceExpiring = ref<ExpiringItem[]>([])
 const riskInsights = ref<RiskInsight[]>([])
-const projectHealth = ref<ProjectHealthItem[]>([])
 
 const conformanceRaw = ref<ConformanceItem[]>([])
 
@@ -397,33 +264,7 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-const getDaysLeftColor = (daysLeft: number): string => {
-  if (daysLeft <= 7) return 'danger'
-  if (daysLeft <= 14) return 'warning'
-  return 'success'
-}
 
-const getProgressColor = (percent: number): string => {
-  if (percent >= 80) return 'var(--cat-chart-green)'
-  if (percent >= 50) return 'var(--cat-chart-amber)'
-  return 'var(--cat-chart-red)'
-}
-
-const getProgressStatus = (percent: number): string => {
-  if (percent >= 80) return 'success'
-  if (percent >= 50) return 'warning'
-  return 'exception'
-}
-
-const getEvidenceHealthColor = (state: string): string => {
-  const colors: Record<string, string> = {
-    in_review: '#E6A23C',
-    in_progress: '#409EFF',
-    claimed: '#67C23A',
-    expired: '#F56C6C',
-  }
-  return colors[state] || '#909399'
-}
 
 const getSeverityTagType = (severity: string): string => {
   const typeMap: Record<string, string> = {
@@ -606,7 +447,7 @@ const renderPipelineChart = () => {
 const fetchStats = async () => {
   statsLoading.value = true
   try {
-    const response = await axios.get('/api/v1/dashboard/stats')
+    const response = await client.get('/dashboard/stats')
     stats.value = response.data
   } catch (err: unknown) {
     const e = err as { response?: { data?: { error?: string } } }
@@ -619,7 +460,7 @@ const fetchStats = async () => {
 const fetchRecentAssessments = async () => {
   assessmentsLoading.value = true
   try {
-    const response = await axios.get('/api/v1/dashboard/recent-assessments')
+    const response = await client.get('/dashboard/recent-assessments')
     recentAssessments.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to load recent assessments:', err)
@@ -628,34 +469,10 @@ const fetchRecentAssessments = async () => {
   }
 }
 
-const fetchUpcomingDueDates = async () => {
-  dueDatesLoading.value = true
-  try {
-    const response = await axios.get('/api/v1/dashboard/upcoming-due-dates')
-    upcomingDueDates.value = response.data.data || []
-  } catch (err: unknown) {
-    console.error('Failed to load upcoming due dates:', err)
-  } finally {
-    dueDatesLoading.value = false
-  }
-}
-
-const fetchComplianceCoverage = async () => {
-  coverageLoading.value = true
-  try {
-    const response = await axios.get('/api/v1/dashboard/compliance-coverage')
-    complianceCoverage.value = response.data.data || []
-  } catch (err: unknown) {
-    console.error('Failed to load compliance coverage:', err)
-  } finally {
-    coverageLoading.value = false
-  }
-}
-
 const fetchAssessmentDistribution = async () => {
   distributionLoading.value = true
   try {
-    const response = await axios.get('/api/v1/dashboard/assessment-distribution')
+    const response = await client.get('/dashboard/assessment-distribution')
     assessmentDistribution.value = (response.data.data || []).filter((d: DistributionItem) => d.count > 0)
   } catch (err: unknown) {
     console.error('Failed to load assessment distribution:', err)
@@ -666,23 +483,10 @@ const fetchAssessmentDistribution = async () => {
   }
 }
 
-const fetchEvidenceHealth = async () => {
-  evidenceHealthLoading.value = true
-  try {
-    const response = await axios.get('/api/v1/dashboard/evidence-health')
-    evidenceHealth.value = response.data.data || []
-    evidenceExpiring.value = response.data.expiringSoon || []
-  } catch (err: unknown) {
-    console.error('Failed to load evidence health:', err)
-  } finally {
-    evidenceHealthLoading.value = false
-  }
-}
-
 const fetchConformanceBreakdown = async () => {
   conformanceLoading.value = true
   try {
-    const response = await axios.get('/api/v1/dashboard/conformance-breakdown')
+    const response = await client.get('/dashboard/conformance-breakdown')
     conformanceRaw.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to load conformance breakdown:', err)
@@ -696,7 +500,7 @@ const fetchConformanceBreakdown = async () => {
 const fetchRiskInsights = async () => {
   riskInsightsLoading.value = true
   try {
-    const response = await axios.get('/api/v1/dashboard/risk-insights')
+    const response = await client.get('/dashboard/risk-insights')
     riskInsights.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to load risk insights:', err)
@@ -705,29 +509,13 @@ const fetchRiskInsights = async () => {
   }
 }
 
-const fetchProjectHealth = async () => {
-  projectHealthLoading.value = true
-  try {
-    const response = await axios.get('/api/v1/dashboard/project-health')
-    projectHealth.value = response.data.data || []
-  } catch (err: unknown) {
-    console.error('Failed to load project health:', err)
-  } finally {
-    projectHealthLoading.value = false
-  }
-}
-
 onMounted(async () => {
   await Promise.all([
     fetchStats(),
     fetchRecentAssessments(),
-    fetchUpcomingDueDates(),
-    fetchComplianceCoverage(),
     fetchAssessmentDistribution(),
-    fetchEvidenceHealth(),
     fetchConformanceBreakdown(),
     fetchRiskInsights(),
-    fetchProjectHealth(),
   ])
 })
 </script>

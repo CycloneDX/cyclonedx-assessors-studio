@@ -35,8 +35,29 @@ const gracefulShutdown = async (signal: string) => {
   process.exit(0);
 };
 
+// A built artifact started without NODE_ENV would run with development
+// defaults (no Secure cookie unless APP_URL is https, open registration
+// without the acknowledgement). Refuse rather than run weakened (security
+// review W4). Source runs (tsx, tests) are unaffected.
+if (!process.env.NODE_ENV && import.meta.url.includes('/dist/')) {
+  console.error('NODE_ENV is not set. Set NODE_ENV=production (or development) explicitly to start the server.');
+  process.exit(1);
+}
+
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// A throw outside any request handler leaves the process in an unknown
+// state. Log it with context, then exit non-zero so the supervisor
+// (Docker restart policy / systemd) starts a clean instance.
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught exception; exiting', { error });
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection; exiting', { reason });
+  process.exit(1);
+});
 
 // Start server
 async function start() {
@@ -76,6 +97,15 @@ async function start() {
 
     logger.info('Initializing event system...');
     await initializeEventSystem();
+
+    // Print the first-run setup token while no admin exists.
+    {
+      const { checkSetupComplete } = await import('./middleware/setup.js');
+      if (!(await checkSetupComplete())) {
+        const { announceSetupToken } = await import('./utils/setup-token.js');
+        announceSetupToken();
+      }
+    }
     logger.info('Event system initialized');
 
     // Start periodic background tasks

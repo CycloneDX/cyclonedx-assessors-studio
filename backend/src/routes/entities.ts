@@ -1,32 +1,41 @@
 import { Router } from 'express';
+import { queryString, likeContains } from '../utils/query.js';
+import { readableAssessmentIds, inList } from '../utils/access.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import busboy from 'busboy';
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import { AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
 import { syncEntityTags, fetchTagsForEntities } from '../utils/tags.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { validatePagination } from '../utils/pagination.js';
-import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
+import { asyncHandler, handleValidationError, parseBody } from '../utils/route-helpers.js';
 
 const router = Router();
+
+const geoFields = {
+  country: z.string().max(100).nullable().optional(),
+  region: z.string().max(100).nullable().optional(),
+  locality: z.string().max(100).nullable().optional(),
+  timezone: z.string().max(60).nullable().optional(),
+};
 
 const createEntitySchema = z.object({
   name: z.string().min(1, 'Entity name is required'),
   description: z.string().nullable().optional(),
   entityType: z.enum(['organization', 'business_unit', 'team', 'product', 'product_version', 'component', 'service', 'project']),
   tags: z.array(z.string()).optional(),
+  ...geoFields,
 });
 
 const updateEntitySchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
   state: z.enum(['active', 'inactive', 'archived']).optional(),
-  // Tags follow set semantics — the array passed in replaces the
-  // current tag set on the entity. An empty array clears all tags.
-  // Mirrors the same shape `createEntitySchema` accepts on POST.
   tags: z.array(z.string()).optional(),
+  ...geoFields,
 });
 
 const createRelationshipSchema = z.object({
@@ -40,13 +49,13 @@ const createPolicySchema = z.object({
 });
 
 // GET / - List entities (filter by entity_type, state, search)
-router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/', requireAuth, requirePermission('entities.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const db = getDatabase();
     const { limit, offset } = validatePagination(req.query);
-    const entity_type = req.query.entity_type as string | undefined;
-    const state = req.query.state as string | undefined;
-    const search = req.query.search as string | undefined;
+    const entity_type = queryString(req.query.entity_type);
+    const state = queryString(req.query.state);
+    const search = queryString(req.query.search);
 
     let query = db.selectFrom('entity').selectAll();
 
@@ -64,8 +73,8 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
     if (search) {
       query = query.where((eb) =>
         eb.or([
-          eb('name', 'ilike', `%${search}%`),
-          eb('description', 'ilike', `%${search}%`),
+          eb('name', 'ilike', likeContains(search)),
+          eb('description', 'ilike', likeContains(search)),
         ])
       );
     }
@@ -82,8 +91,8 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
     if (search) {
       countQuery = countQuery.where((eb) =>
         eb.or([
-          eb('name', 'ilike', `%${search}%`),
-          eb('description', 'ilike', `%${search}%`),
+          eb('name', 'ilike', likeContains(search)),
+          eb('description', 'ilike', likeContains(search)),
         ])
       );
     }
@@ -103,9 +112,40 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
     const entityIds = entities.map((e) => e.id);
     const tagsByEntity = await fetchTagsForEntities(db, 'entity_tag', 'entity_id', entityIds);
 
+    // Fetch parent names via 'contains' relationships (source contains target)
+    const parentRows = entityIds.length
+      ? await db
+          .selectFrom('entity_relationship as er')
+          .innerJoin('entity as parent', 'parent.id', 'er.source_entity_id')
+          .where('er.target_entity_id', 'in', entityIds)
+          .where('er.relationship_type', '=', 'contains')
+          .select(['er.target_entity_id as child_id', 'parent.name as parent_name'])
+          .execute()
+      : [];
+    const parentByEntity: Record<string, string> = {};
+    for (const r of parentRows) parentByEntity[r.child_id] = r.parent_name;
+
+    // Fetch standards count per entity
+    const standardRows = entityIds.length
+      ? await db
+          .selectFrom('entity_standard as es')
+          .innerJoin('standard as s', 's.id', 'es.standard_id')
+          .where('es.entity_id', 'in', entityIds)
+          .select(['es.entity_id', 's.id as standard_id', 's.name as standard_name', 's.version as standard_version'])
+          .execute()
+      : [];
+    const standardsByEntity: Record<string, Array<{ id: string; name: string; version: string | null }>> = {};
+    for (const r of standardRows) {
+      if (!standardsByEntity[r.entity_id]) standardsByEntity[r.entity_id] = [];
+      standardsByEntity[r.entity_id].push({ id: r.standard_id, name: r.standard_name, version: r.standard_version ?? null });
+    }
+
     const entitiesWithTags = entities.map((e) => ({
       ...e,
       tags: tagsByEntity[e.id] || [],
+      parentName: parentByEntity[e.id] || null,
+      standards: standardsByEntity[e.id] || [],
+      assessmentCount: 0,
     }));
 
     res.json({
@@ -127,7 +167,7 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
 router.get('/relationship-graph', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const db = getDatabase();
-    const perspective = req.query.perspective as string | undefined; // 'producer' | 'consumer' | undefined
+    const perspective = queryString(req.query.perspective); // 'producer' | 'consumer' | undefined
 
     // Fetch all non-archived entities
     const entities = await db
@@ -219,6 +259,248 @@ router.get('/relationship-graph', requireAuth, async (req: AuthRequest, res: Res
     logger.error('Get global relationship graph error', { error, requestId: req.requestId });
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// ─── Types used only in the import handler ────────────────────────────────────
+interface ImportRow {
+  name: string;
+  parentName?: string | null;
+  description?: string | null;
+  entityType?: string | null;
+  country?: string | null;
+  region?: string | null;
+  locality?: string | null;
+  timezone?: string | null;
+  state?: string | null;
+}
+
+const VALID_ENTITY_TYPES = new Set([
+  'organization','business_unit','team','product','product_version','component','service','project',
+]);
+const VALID_STATES = new Set(['active','inactive','archived']);
+
+function parseCSV(text: string): ImportRow[] {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  if (lines.length < 2) return [];
+  // Normalise headers: lowercase, trim, replace spaces/hyphens with underscores
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[\s-]+/g, '_'));
+  const rows: ImportRow[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    // Simple CSV split — handles quoted fields with commas inside
+    const values: string[] = [];
+    let cur = '';
+    let inQuote = false;
+    for (const ch of line) {
+      if (ch === '"') { inQuote = !inQuote; }
+      else if (ch === ',' && !inQuote) { values.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    values.push(cur.trim());
+    const obj: Record<string, string> = {};
+    headers.forEach((h, idx) => { if (values[idx] !== undefined) obj[h] = values[idx]; });
+    // Accept either entity_name / name, parent_name / parent_id (name-based)
+    const name = obj.entity_name || obj.name;
+    if (!name) continue;
+    rows.push({
+      name,
+      parentName: obj.parent_name || obj.parent_entity_name || null,
+      description: obj.description || null,
+      entityType: obj.entity_type || obj.entitytype || null,
+      country: obj.country || null,
+      region: obj.region || null,
+      locality: obj.locality || obj.city || null,
+      timezone: obj.timezone || null,
+      state: obj.state || null,
+    });
+  }
+  return rows;
+}
+
+function parseJSON(text: string): ImportRow[] {
+  const parsed = JSON.parse(text);
+  const arr = Array.isArray(parsed) ? parsed : parsed.entities ?? parsed.data ?? [];
+  return arr.map((item: Record<string, unknown>) => ({
+    name: String(item.name || item.entity_name || '').trim(),
+    parentName: String(item.parentName || item.parent_name || item.parent_entity_name || '').trim() || null,
+    description: item.description ? String(item.description) : null,
+    entityType: item.entityType ? String(item.entityType) : (item.entity_type ? String(item.entity_type) : null),
+    country: item.country ? String(item.country) : null,
+    region: item.region ? String(item.region) : null,
+    locality: item.locality ?? item.city ? String(item.locality ?? item.city) : null,
+    timezone: item.timezone ? String(item.timezone) : null,
+    state: item.state ? String(item.state) : null,
+  })).filter((r: ImportRow) => r.name);
+}
+
+// POST /import - Bulk upsert entities from CSV or JSON (admin only)
+router.post('/import', requireAuth, requirePermission('entities.create'), async (req: AuthRequest, res: Response): Promise<void> => {
+  const ct = req.headers['content-type'] || '';
+  if (!ct.includes('multipart/form-data')) {
+    res.status(400).json({ error: 'Request must be multipart/form-data' });
+    return;
+  }
+
+  // One file, 5 MB. Respond exactly once: busboy emits 'close' after
+  // 'error', and a second response from an event callback would crash
+  // the process.
+  const bb = busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024, files: 1, parts: 5, fields: 4 } });
+  const chunks: Buffer[] = [];
+  let filename = '';
+  let fileDone = false;
+  let tooLarge = false;
+  let tooMany = false;
+  let responded = false;
+  const respond = (status: number, body: Record<string, unknown>): void => {
+    if (responded || res.headersSent) return;
+    responded = true;
+    res.status(status).json(body);
+  };
+
+  bb.on('file', (_field, file, info) => {
+    filename = info.filename;
+    file.on('data', (chunk: Buffer) => chunks.push(chunk));
+    file.on('limit', () => { tooLarge = true; });
+    file.on('end', () => { fileDone = true; });
+    file.on('error', (err) => { logger.error('Entity import file stream error', { err }); });
+  });
+  bb.on('filesLimit', () => { tooMany = true; });
+  bb.on('partsLimit', () => { tooMany = true; });
+  bb.on('fieldsLimit', () => { tooMany = true; });
+
+  bb.on('close', () => {
+    if (responded) return;
+    void importEntities().catch((err) => {
+      logger.error('Entity import failed', { err, userId: req.user?.id });
+      respond(500, { error: 'Import failed' });
+    });
+  });
+
+  const importEntities = async (): Promise<void> => {
+    if (tooLarge) {
+      respond(413, { error: 'File exceeds maximum size of 5 MB' });
+      return;
+    }
+    if (tooMany) {
+      respond(413, { error: 'Upload exactly one file' });
+      return;
+    }
+    if (!fileDone || chunks.length === 0) {
+      respond(400, { error: 'No file received' });
+      return;
+    }
+
+    const text = Buffer.concat(chunks).toString('utf8');
+    let rows: ImportRow[];
+    try {
+      if (filename.endsWith('.json')) {
+        rows = parseJSON(text);
+      } else {
+        rows = parseCSV(text);
+      }
+    } catch (e) {
+      logger.warn('Entity import parse error', { error: (e as Error).message, userId: req.user?.id });
+      respond(400, { error: 'Failed to parse file: expected CSV or a JSON array of entities' });
+      return;
+    }
+
+    if (rows.length === 0) {
+      respond(400, { error: 'No valid rows found in file' });
+      return;
+    }
+
+    const db = getDatabase();
+
+    // Fetch all existing entities by name for upsert logic
+    const existingEntities = await db.selectFrom('entity').select(['id', 'name']).execute();
+    const nameToId = new Map<string, string>(existingEntities.map(e => [e.name.toLowerCase(), e.id]));
+
+    let inserted = 0;
+    let updated = 0;
+    const errors: string[] = [];
+    const localNameToId = new Map<string, string>(nameToId); // grows as we insert
+
+    for (const row of rows) {
+      try {
+        const entityType = VALID_ENTITY_TYPES.has(row.entityType ?? '') ? row.entityType! : 'team';
+        const state = VALID_STATES.has(row.state ?? '') ? row.state! : 'active';
+
+        const existingId = localNameToId.get(row.name.toLowerCase());
+        let entityId: string;
+
+        if (existingId) {
+          // Update existing
+          const updateData: Record<string, unknown> = { updated_at: new Date() };
+          if (row.description !== null) updateData.description = row.description;
+          if (row.country !== null) updateData.country = row.country;
+          if (row.region !== null) updateData.region = row.region;
+          if (row.locality !== null) updateData.locality = row.locality;
+          if (row.timezone !== null) updateData.timezone = row.timezone;
+          await db.updateTable('entity').set(updateData).where('id', '=', existingId).execute();
+          entityId = existingId;
+          updated++;
+        } else {
+          // Insert new
+          entityId = uuidv4();
+          const bomRef = `${entityType}-${entityId.substring(0, 8)}`;
+          await db.insertInto('entity').values({
+            id: entityId, name: row.name,
+            description: row.description ?? null,
+            entity_type: entityType as 'organization' | 'business_unit' | 'team' | 'product' | 'product_version' | 'component' | 'service' | 'project',
+            state: state as 'active' | 'inactive' | 'archived',
+            bom_ref: bomRef,
+            country: row.country ?? null,
+            region: row.region ?? null,
+            locality: row.locality ?? null,
+            timezone: row.timezone ?? null,
+          }).execute();
+          localNameToId.set(row.name.toLowerCase(), entityId);
+          inserted++;
+        }
+
+        // Wire parent → child 'contains' relationship
+        if (row.parentName) {
+          const parentId = localNameToId.get(row.parentName.toLowerCase());
+          if (parentId) {
+            const existing = await db
+              .selectFrom('entity_relationship')
+              .where('source_entity_id', '=', parentId)
+              .where('target_entity_id', '=', entityId)
+              .where('relationship_type', '=', 'contains')
+              .select('id')
+              .executeTakeFirst();
+            if (!existing) {
+              await db.insertInto('entity_relationship').values({
+                id: uuidv4(),
+                source_entity_id: parentId,
+                target_entity_id: entityId,
+                relationship_type: 'contains',
+                created_at: new Date(),
+                updated_at: new Date(),
+              }).execute();
+            }
+          } else {
+            errors.push(`"${row.name}": parent "${row.parentName}" not found — relationship skipped`);
+          }
+        }
+      } catch (e) {
+        // Database errors carry constraint and column names; keep them in the log.
+        logger.warn('Entity import row failed', { row: row.name, error: (e as Error).message, userId: req.user?.id });
+        errors.push(`"${row.name}": could not be saved`);
+      }
+    }
+
+    logger.info('Entity import complete', { inserted, updated, errors: errors.length, userId: req.user?.id });
+    respond(200, { inserted, updated, total: rows.length, errors });
+  };
+
+  bb.on('error', (err) => {
+    logger.error('Entity import busboy error', { err });
+    respond(400, { error: 'Error processing upload' });
+  });
+
+  req.pipe(bb);
 });
 
 // GET /:id - Get entity with relationships, standards, tags, compliance policies
@@ -335,6 +617,10 @@ router.post(
           entityType: data.entityType,
           state: 'active',
           bomRef,
+          country: data.country ?? null,
+          region: data.region ?? null,
+          locality: data.locality ?? null,
+          timezone: data.timezone ?? null,
         }))
         .execute();
 
@@ -391,6 +677,10 @@ router.put(
       if (data.name !== undefined) updateData.name = data.name;
       if (data.description !== undefined) updateData.description = data.description;
       if (data.state !== undefined) updateData.state = data.state;
+      if (data.country !== undefined) updateData.country = data.country;
+      if (data.region !== undefined) updateData.region = data.region;
+      if (data.locality !== undefined) updateData.locality = data.locality;
+      if (data.timezone !== undefined) updateData.timezone = data.timezone;
 
       if (Object.keys(updateData).length > 0) {
         await db
@@ -501,7 +791,7 @@ router.get('/:id/children', requireAuth, async (req: AuthRequest, res: Response)
 });
 
 // GET /:id/assessments - Get assessments for this entity
-router.get('/:id/assessments', requireAuth, async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/:id/assessments', requireAuth, requirePermission('assessments.view'), async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const db = getDatabase();
 
@@ -516,9 +806,12 @@ router.get('/:id/assessments', requireAuth, async (req: AuthRequest, res: Respon
       return;
     }
 
+    // Only assessments the caller may read (security review Z4).
+    const readable = await readableAssessmentIds(db, req.user!);
     const assessments = (await db
       .selectFrom('assessment')
       .where('entity_id', '=', req.params.id as string)
+      .$if(readable !== null, (qb) => qb.where('id', 'in', inList(readable as string[])))
       .select([
         'id',
         'title',
@@ -540,7 +833,7 @@ router.get('/:id/assessments', requireAuth, async (req: AuthRequest, res: Respon
 });
 
 // GET /:id/history - Get assessment history
-router.get('/:id/history', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/:id/history', requireAuth, requirePermission('assessments.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const db = getDatabase();
 
@@ -556,10 +849,12 @@ router.get('/:id/history', requireAuth, asyncHandler(async (req: AuthRequest, re
     }
 
     // Get all assessments grouped by standard
+    const readable = await readableAssessmentIds(db, req.user!);
     const assessments = (await db
       .selectFrom('assessment')
       .leftJoin('standard', 'standard.id', 'assessment.standard_id')
       .where('assessment.entity_id', '=', req.params.id)
+      .$if(readable !== null, (qb) => qb.where('assessment.id', 'in', inList(readable as string[])))
       .select([
         'assessment.id as id',
         'assessment.title as title',
@@ -605,7 +900,7 @@ router.get('/:id/relationship-graph', requireAuth, async (req: AuthRequest, res:
   try {
     const db = getDatabase();
     const rootId = req.params.id as string;
-    const maxDepth = Math.min(parseInt(req.query.depth as string) || 5, 10);
+    const maxDepth = Math.min(parseInt((queryString(req.query.depth) ?? '')) || 5, 10);
 
     // Verify entity exists
     const rootEntity = await db
@@ -1069,7 +1364,9 @@ router.put(
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const db = getDatabase();
-      const { description, standardId } = req.body;
+      const body = parseBody(z.object({ description: z.string().max(20_000).nullable().optional(), standardId: z.string().uuid().optional() }), req.body, res);
+      if (!body) return;
+      const { description, standardId } = body;
 
       const policy = await db
         .selectFrom('compliance_policy')
@@ -1198,7 +1495,7 @@ router.delete(
 );
 
 // GET /:id/progress - Get progress tracking data
-router.get('/:id/progress', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/:id/progress', requireAuth, requirePermission('assessments.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const db = getDatabase();
 
@@ -1214,11 +1511,13 @@ router.get('/:id/progress', requireAuth, asyncHandler(async (req: AuthRequest, r
     }
 
     // Get completed assessments for this entity
+    const readable = await readableAssessmentIds(db, req.user!);
     const assessments = (await db
       .selectFrom('assessment')
       .leftJoin('standard', 'standard.id', 'assessment.standard_id')
       .where('assessment.entity_id', '=', req.params.id as string)
       .where('assessment.state', '=', 'complete')
+      .$if(readable !== null, (qb) => qb.where('assessment.id', 'in', inList(readable as string[])))
       .select([
         'assessment.id as id',
         'assessment.title as title',

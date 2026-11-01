@@ -32,11 +32,14 @@
  * intact but marks it rescinded.
  */
 
+import type { JsonObject } from '../signatures/types.js';
+import { canParticipateInAssessment } from '../utils/access.js';
+import { auditMutations } from '../utils/audit.js';
 import { Router, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { getDatabase } from '../db/connection.js';
-import { requireAuth, requirePermission, type AuthRequest } from '../middleware/auth.js';
+import { requireAuth, requireSession, requirePermission, type AuthRequest } from '../middleware/auth.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { encryptionService } from '../utils/encryption.js';
@@ -453,7 +456,7 @@ export function buildDocumentEnvelopePayload(args: {
  * object verbatim, so it is the stable home of the identity used at
  * sign time and therefore what declarations canonicalisation must echo.
  */
-function extractIdentityFromSignatureEnvelope(
+export function extractIdentityFromSignatureEnvelope(
   signatureJson: unknown,
 ): StoredSignatoryIdentity | null {
   if (!signatureJson || typeof signatureJson !== 'object') return null;
@@ -889,8 +892,9 @@ router.delete(
  * and becomes part of the declarations subtree at seal time.
  *
  * Ownership rules: if the slot is pinned (required_user_id is set)
- * only that user can sign; otherwise any caller with signatures.sign
- * can sign. A slot can only be signed once.
+ * only that user can sign; otherwise a participant in the assessment
+ * (or an admin) with signatures.sign can sign. A slot can only be
+ * signed once.
  */
 router.post(
   '/:id/signatories/:slotId/sign',
@@ -936,6 +940,12 @@ router.post(
         res.status(404).json({ error: 'Signature not found in your inventory' });
         return;
       }
+      // An unpinned slot is open to participants in the assessment, not to
+      // every holder of signatures.sign (security review Z13).
+      if (!slot.required_user_id && !(await canParticipateInAssessment(db, req.user!, affirmation.assessment_id as string))) {
+        res.status(403).json({ error: 'Only participants in this assessment can sign this slot', reason: 'not_participant' });
+        return;
+      }
 
       let payload: StoredElectronicPayload | StoredDigitalPayload;
       try {
@@ -972,7 +982,7 @@ router.post(
       // is decided by the stored signature payload below.
       const { sha256Hex: canonicalHash } = provider.canonicalize(
         canonicalPayload as unknown as Parameters<typeof provider.canonicalize>[0],
-        { algorithm: 'ES256' },
+        slotSigner(sigRow.signature_type, payload),
       );
 
       let signatureEnvelope: Record<string, unknown>;
@@ -1046,13 +1056,29 @@ router.post(
           },
         };
 
+        // The submitted value must verify against the signer's registered
+        // key and algorithm before it is stored; it used to be stored as-is
+        // and later sealed by the platform (security review X2).
+        const check = await provider.verify(
+          signatureEnvelope as unknown as Parameters<typeof provider.verify>[0],
+          { allowedAlgorithms: [digital.signatureAlgorithm] },
+        );
+        if (!check.valid) {
+          res.status(400).json({
+            error: 'The signature does not verify against your registered public key. Sign the canonicalPayload returned by /sign/prepare.',
+            reasons: check.reasons,
+          });
+          return;
+        }
+
         await db
           .updateTable('affirmation_signatory')
           .set(
             toSnakeCase({
               signatoryId: digitalSignatoryId,
               signatureJson: JSON.stringify(signatureEnvelope),
-              canonicalHash: data.canonicalPayloadHash ?? canonicalHash,
+              // Always the server's hash; a client-supplied value is ignored.
+              canonicalHash,
               signedAt: new Date(),
               signedBy: userId,
               updatedAt: new Date(),
@@ -1132,8 +1158,9 @@ router.post(
     }
 
     const userSignatureIdRaw = (req.body as { userSignatureId?: unknown })?.userSignatureId;
-    if (typeof userSignatureIdRaw !== 'string') {
-      res.status(400).json({ error: 'userSignatureId is required' });
+    // A UUID, not any string: anything else reached the database and 500'd (I9).
+    if (typeof userSignatureIdRaw !== 'string' || !z.string().uuid().safeParse(userSignatureIdRaw).success) {
+      res.status(400).json({ error: 'userSignatureId must be a signature id' });
       return;
     }
 
@@ -1165,6 +1192,10 @@ router.post(
       res.status(404).json({ error: 'Signature not found in your inventory' });
       return;
     }
+    if (!slot.required_user_id && !(await canParticipateInAssessment(db, req.user!, affirmation.assessment_id as string))) {
+      res.status(403).json({ error: 'Only participants in this assessment can sign this slot' });
+      return;
+    }
 
     let payload: StoredElectronicPayload | StoredDigitalPayload;
     try {
@@ -1191,19 +1222,44 @@ router.post(
 
     const canonicalPayload = buildSlotCanonicalPayload({ affirmation, slot, identity });
     const provider = getSignatureProviders().getDefault();
-    const { sha256Hex } = provider.canonicalize(
+    // Digital: the bytes /sign will verify, i.e. the signer descriptor with
+    // the algorithm and embedded public key (security review X2).
+    const signer = slotSigner(sigRow.signature_type, payload);
+    const { sha256Hex, bytes } = provider.canonicalize(
       canonicalPayload as unknown as Parameters<typeof provider.canonicalize>[0],
-      { algorithm: 'ES256' },
+      signer,
     );
 
     res.json({
       affirmationId: affirmation.id,
       slotId: slot.id,
+      // Sign these bytes (base64url) with the registered private key.
+      canonicalPayload: Buffer.from(bytes).toString('base64url'),
       canonicalPayloadHash: sha256Hex,
       hashAlgorithm: 'sha256',
+      signatureAlgorithm: signer.algorithm,
     });
   }),
 );
+
+/**
+ * The JSF signer descriptor a slot is canonicalised with. Digital slots
+ * embed the signer's public key (as JWK) in the envelope, so it is part of
+ * the signed bytes; electronic slots use the platform's ES256 stamp.
+ */
+function slotSigner(
+  signatureType: string,
+  payload: StoredElectronicPayload | StoredDigitalPayload,
+): { algorithm: string; publicKey?: JsonObject } {
+  if (signatureType === 'digital') {
+    const digital = payload as StoredDigitalPayload;
+    return {
+      algorithm: digital.signatureAlgorithm,
+      publicKey: exportPublicJwk(digital.publicKeyPem) as unknown as JsonObject,
+    };
+  }
+  return { algorithm: 'ES256' };
+}
 
 /**
  * POST /affirmations/:id/seal
@@ -1218,7 +1274,9 @@ router.post(
  */
 router.post(
   '/:id/seal',
-  requireAuth,
+  // Platform-signed, irreversible: interactive session only (security review X8).
+  requireSession,
+  auditMutations('affirmation'),
   requirePermission('affirmations.manage'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -1250,6 +1308,28 @@ router.post(
         error: 'All signatory slots must be signed before sealing',
         reason: 'unsigned_slots',
         unsignedSlotIds: unsigned.map((s) => s.id),
+      });
+      return;
+    }
+
+    // The platform signature vouches for every slot it seals, so each
+    // digital slot is re-verified first; a slot stored before signature
+    // verification existed must not be sealed unchecked (security review X2).
+    const sealProvider = getSignatureProviders().getDefault();
+    const failedSlotIds: string[] = [];
+    for (const slot of slots) {
+      const envelope = slot.signature_json as Record<string, unknown> | null;
+      const block = envelope?.signature as Record<string, unknown> | undefined;
+      if (typeof block?.value === 'string' && block.value.length > 0) {
+        const result = await sealProvider.verify(envelope as unknown as Parameters<typeof sealProvider.verify>[0], {});
+        if (!result.valid) failedSlotIds.push(slot.id);
+      }
+    }
+    if (failedSlotIds.length > 0) {
+      res.status(409).json({
+        error: 'One or more digital signatures do not verify; they must be re-signed before sealing',
+        reason: 'invalid_slot_signatures',
+        slotIds: failedSlotIds,
       });
       return;
     }
@@ -1356,6 +1436,163 @@ router.post(
   }),
 );
 
+export interface AffirmationVerifyResult {
+  verified: boolean;
+  rescinded: boolean;
+  platformKeyFingerprint: string | null;
+  slots: Array<Record<string, unknown>>;
+  declarations: { valid: boolean };
+  document: { valid: boolean };
+  issues: string[];
+}
+
+/**
+ * Verify a sealed affirmation's three layers: each signatory slot,
+ * the declarations envelope and the document envelope. Shared by the
+ * verify route and the assessment PDF report.
+ */
+export async function verifyAffirmation(
+  db: ReturnType<typeof getDatabase>,
+  affirmation: AffirmationRow,
+): Promise<AffirmationVerifyResult> {
+  const slots = await fetchSlots(db, affirmation.id);
+  const provider = getSignatureProviders().getDefault();
+  const issues: string[] = [];
+  const slotResults: Array<Record<string, unknown>> = [];
+
+  // Layer 1: per slot signatures. Electronic slots only recompute
+  // the canonical hash; digital slots verify cryptographically.
+  for (const slot of slots) {
+    const identity = extractIdentityFromSignatureEnvelope(slot.signature_json);
+    if (!slot.signature_json || !identity) {
+      issues.push(`Slot ${slot.id} has no recoverable signature envelope`);
+      slotResults.push({ slotId: slot.id, valid: false, reason: 'no_envelope' });
+      continue;
+    }
+
+    const canonicalPayload = buildSlotCanonicalPayload({
+      affirmation,
+      slot,
+      identity,
+    });
+    const envelope = slot.signature_json as Record<string, unknown>;
+    const signatureBlock = envelope.signature as Record<string, unknown> | undefined;
+    // A digital signaturecore is identifiable by the JSF `value`
+    // field carrying a non-empty string (the base64url signature).
+    // Electronic envelopes never populate `value`; they carry
+    // signedName, jurisdiction, legalIntent, etc. instead. Using
+    // shape detection instead of an envelope `type` field keeps the
+    // signature object spec-clean (JSF signaturecore fields only).
+    const isDigital =
+      typeof signatureBlock?.value === 'string' && signatureBlock.value.length > 0;
+    const sigType: 'digital' | 'electronic' = isDigital ? 'digital' : 'electronic';
+    // Drift detection must re-canonicalize with the same algorithm
+    // that was used when the slot was signed. Digital slots carry
+    // the algorithm inside the envelope (the caller chose it when
+    // computing signatureValue). Electronic slots have no signing
+    // algorithm, so we fall back to the platform's stable stamp.
+    const hashAlgorithm =
+      isDigital && typeof signatureBlock?.algorithm === 'string'
+        ? (signatureBlock.algorithm as string)
+        : 'ES256';
+    // Same signer descriptor the slot was signed with: digital slots
+    // embed the public key, which is part of the signed bytes (X2).
+    const embeddedKey = isDigital && signatureBlock?.publicKey && typeof signatureBlock.publicKey === 'object'
+      ? (signatureBlock.publicKey as JsonObject)
+      : undefined;
+    const { sha256Hex } = provider.canonicalize(
+      canonicalPayload as unknown as Parameters<typeof provider.canonicalize>[0],
+      embeddedKey ? { algorithm: hashAlgorithm, publicKey: embeddedKey } : { algorithm: hashAlgorithm },
+    );
+    const drifted = sha256Hex !== (slot.canonical_hash ?? '');
+
+    if (drifted) {
+      issues.push(`Slot ${slot.id} canonical payload has drifted since signing`);
+    }
+
+    if (isDigital) {
+      // For digital slots, use the SignatureProvider's verify via
+      // the full envelope. The envelope carries publicKey.pem and
+      // value, which JSF can walk directly.
+      const result = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
+        requireEmbeddedPublicKey: false,
+      });
+      if (!result.valid) {
+        issues.push(`Slot ${slot.id} digital signature did not verify: ${result.reasons.join('; ')}`);
+      }
+      slotResults.push({
+        slotId: slot.id,
+        valid: result.valid && !drifted,
+        drifted,
+        signatureType: 'digital',
+        reasons: result.reasons,
+      });
+    } else {
+      // Electronic slots: the signature is a record of intent; we
+      // only report drift.
+      slotResults.push({
+        slotId: slot.id,
+        valid: !drifted,
+        drifted,
+        signatureType: sigType,
+      });
+    }
+  }
+
+  // Layer 2: declarations envelope. Verify with the historic key.
+  const platformKey = affirmation.platform_key_fingerprint
+    ? await getKeyByFingerprint(affirmation.platform_key_fingerprint)
+    : null;
+  let declarationsValid = false;
+  if (!platformKey) {
+    issues.push('Platform key that sealed this affirmation could not be located by fingerprint');
+  } else if (affirmation.declarations_signature_json) {
+    const envelope = affirmation.declarations_signature_json as Record<string, unknown>;
+    const result = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
+      publicKey: platformKey.publicKeyPem,
+    });
+    declarationsValid = result.valid;
+    if (!result.valid) {
+      issues.push(`Declarations signature did not verify: ${result.reasons.join('; ')}`);
+    }
+  } else {
+    issues.push('Declarations signature envelope is missing on a sealed affirmation');
+  }
+
+  // Layer 3: document envelope.
+  let documentValid = false;
+  if (platformKey && affirmation.document_signature_json) {
+    const envelope = affirmation.document_signature_json as Record<string, unknown>;
+    const result = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
+      publicKey: platformKey.publicKeyPem,
+    });
+    documentValid = result.valid;
+    if (!result.valid) {
+      issues.push(`Document signature did not verify: ${result.reasons.join('; ')}`);
+    }
+  } else if (!affirmation.document_signature_json) {
+    issues.push('Document signature envelope is missing on a sealed affirmation');
+  }
+
+  const allSlotsValid = slotResults.every((r) => r.valid === true);
+  const verified =
+    allSlotsValid && declarationsValid && documentValid && !affirmation.rescinded_at;
+
+  if (affirmation.rescinded_at) {
+    issues.push('Affirmation has been rescinded');
+  }
+
+  return {
+    verified,
+    rescinded: Boolean(affirmation.rescinded_at),
+    platformKeyFingerprint: affirmation.platform_key_fingerprint,
+    slots: slotResults,
+    declarations: { valid: declarationsValid },
+    document: { valid: documentValid },
+    issues,
+  };
+}
+
 /**
  * POST /affirmations/:id/verify
  * Three-layer verification: each slot signature, the declarations
@@ -1383,137 +1620,7 @@ router.post(
       return;
     }
 
-    const slots = await fetchSlots(db, affirmation.id);
-    const provider = getSignatureProviders().getDefault();
-    const issues: string[] = [];
-    const slotResults: Array<Record<string, unknown>> = [];
-
-    // Layer 1: per slot signatures. Electronic slots only recompute
-    // the canonical hash; digital slots verify cryptographically.
-    for (const slot of slots) {
-      const identity = extractIdentityFromSignatureEnvelope(slot.signature_json);
-      if (!slot.signature_json || !identity) {
-        issues.push(`Slot ${slot.id} has no recoverable signature envelope`);
-        slotResults.push({ slotId: slot.id, valid: false, reason: 'no_envelope' });
-        continue;
-      }
-
-      const canonicalPayload = buildSlotCanonicalPayload({
-        affirmation,
-        slot,
-        identity,
-      });
-      const envelope = slot.signature_json as Record<string, unknown>;
-      const signatureBlock = envelope.signature as Record<string, unknown> | undefined;
-      // A digital signaturecore is identifiable by the JSF `value`
-      // field carrying a non-empty string (the base64url signature).
-      // Electronic envelopes never populate `value`; they carry
-      // signedName, jurisdiction, legalIntent, etc. instead. Using
-      // shape detection instead of an envelope `type` field keeps the
-      // signature object spec-clean (JSF signaturecore fields only).
-      const isDigital =
-        typeof signatureBlock?.value === 'string' && signatureBlock.value.length > 0;
-      const sigType: 'digital' | 'electronic' = isDigital ? 'digital' : 'electronic';
-      // Drift detection must re-canonicalize with the same algorithm
-      // that was used when the slot was signed. Digital slots carry
-      // the algorithm inside the envelope (the caller chose it when
-      // computing signatureValue). Electronic slots have no signing
-      // algorithm, so we fall back to the platform's stable stamp.
-      const hashAlgorithm =
-        isDigital && typeof signatureBlock?.algorithm === 'string'
-          ? (signatureBlock.algorithm as string)
-          : 'ES256';
-      const { sha256Hex } = provider.canonicalize(
-        canonicalPayload as unknown as Parameters<typeof provider.canonicalize>[0],
-        { algorithm: hashAlgorithm },
-      );
-      const drifted = sha256Hex !== (slot.canonical_hash ?? '');
-
-      if (drifted) {
-        issues.push(`Slot ${slot.id} canonical payload has drifted since signing`);
-      }
-
-      if (isDigital) {
-        // For digital slots, use the SignatureProvider's verify via
-        // the full envelope. The envelope carries publicKey.pem and
-        // value, which JSF can walk directly.
-        const result = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
-          requireEmbeddedPublicKey: false,
-        });
-        if (!result.valid) {
-          issues.push(`Slot ${slot.id} digital signature did not verify: ${result.reasons.join('; ')}`);
-        }
-        slotResults.push({
-          slotId: slot.id,
-          valid: result.valid && !drifted,
-          drifted,
-          signatureType: 'digital',
-          reasons: result.reasons,
-        });
-      } else {
-        // Electronic slots: the signature is a record of intent; we
-        // only report drift.
-        slotResults.push({
-          slotId: slot.id,
-          valid: !drifted,
-          drifted,
-          signatureType: sigType,
-        });
-      }
-    }
-
-    // Layer 2: declarations envelope. Verify with the historic key.
-    const platformKey = affirmation.platform_key_fingerprint
-      ? await getKeyByFingerprint(affirmation.platform_key_fingerprint)
-      : null;
-    let declarationsValid = false;
-    if (!platformKey) {
-      issues.push('Platform key that sealed this affirmation could not be located by fingerprint');
-    } else if (affirmation.declarations_signature_json) {
-      const envelope = affirmation.declarations_signature_json as Record<string, unknown>;
-      const result = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
-        publicKey: platformKey.publicKeyPem,
-      });
-      declarationsValid = result.valid;
-      if (!result.valid) {
-        issues.push(`Declarations signature did not verify: ${result.reasons.join('; ')}`);
-      }
-    } else {
-      issues.push('Declarations signature envelope is missing on a sealed affirmation');
-    }
-
-    // Layer 3: document envelope.
-    let documentValid = false;
-    if (platformKey && affirmation.document_signature_json) {
-      const envelope = affirmation.document_signature_json as Record<string, unknown>;
-      const result = await provider.verify(envelope as unknown as Parameters<typeof provider.verify>[0], {
-        publicKey: platformKey.publicKeyPem,
-      });
-      documentValid = result.valid;
-      if (!result.valid) {
-        issues.push(`Document signature did not verify: ${result.reasons.join('; ')}`);
-      }
-    } else if (!affirmation.document_signature_json) {
-      issues.push('Document signature envelope is missing on a sealed affirmation');
-    }
-
-    const allSlotsValid = slotResults.every((r) => r.valid === true);
-    const verified =
-      allSlotsValid && declarationsValid && documentValid && !affirmation.rescinded_at;
-
-    if (affirmation.rescinded_at) {
-      issues.push('Affirmation has been rescinded');
-    }
-
-    res.json({
-      verified,
-      rescinded: Boolean(affirmation.rescinded_at),
-      platformKeyFingerprint: affirmation.platform_key_fingerprint,
-      slots: slotResults,
-      declarations: { valid: declarationsValid },
-      document: { valid: documentValid },
-      issues,
-    });
+    res.json(await verifyAffirmation(db, affirmation));
   }),
 );
 
@@ -1525,7 +1632,9 @@ router.post(
  */
 router.post(
   '/:id/rescind',
-  requireAuth,
+  // Platform-signed, irreversible: interactive session only (security review X8).
+  requireSession,
+  auditMutations('affirmation'),
   requirePermission('affirmations.manage'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {

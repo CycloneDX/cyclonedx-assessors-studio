@@ -121,7 +121,7 @@ function patchAll(root: ParentNode): void {
 let installed = false;
 let observer: MutationObserver | null = null;
 
-export function installAccessibilityPatches(): void {
+function installAccessibilityPatches(): void {
   if (installed || typeof document === 'undefined') return;
   installed = true;
 
@@ -158,12 +158,6 @@ export function installAccessibilityPatches(): void {
     attributes: true,
     attributeFilter: ['aria-activedescendant'],
   });
-}
-
-export function uninstallAccessibilityPatches(): void {
-  observer?.disconnect();
-  observer = null;
-  installed = false;
 }
 
 export default {

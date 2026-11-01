@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { v4 as uuidv4 } from 'uuid';
 import { Kysely } from 'kysely';
-import { KyselyPGlite } from 'kysely-pglite';
+import { pgliteDialect } from '../src/db/pglite-dialect.js';
 
 process.env.NODE_ENV = 'test';
 process.env.DATABASE_PROVIDER = 'pglite';
@@ -24,8 +24,7 @@ const { seedDefaultRolesAndPermissions } = await import('../src/db/seed.js');
 
 const { PGlite } = await import('@electric-sql/pglite');
 const pglite = new PGlite({ dataDir });
-const pgliteWrapper = new KyselyPGlite(pglite);
-const db = new Kysely<any>({ dialect: pgliteWrapper.dialect });
+const db = new Kysely<any>({ dialect: pgliteDialect(pglite) });
 
 const statements = SQL.split(';').filter((s: string) => s.trim());
 let applied = 0;

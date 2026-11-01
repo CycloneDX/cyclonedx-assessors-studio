@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { clampPagination } from '../utils/pagination.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
@@ -7,12 +8,26 @@ import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
 import { hashPassword } from '../utils/crypto.js';
 import { validatePasswordPolicy, PASSWORD_MAX_LENGTH } from '../utils/password-policy.js';
 import { logger } from '../utils/logger.js';
-import { type AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
+import { type AuthRequest, requireAuth, requirePermission, requireSession, getPermissionsForRole } from '../middleware/auth.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
-import { fetchUserById, fetchAssignableUsers, USER_PROFILE_COLUMNS } from '../utils/user-queries.js';
+import { fetchUserById, fetchAssignableUsers, redactUserForApiKey, USER_PROFILE_COLUMNS } from '../utils/user-queries.js';
 import { VALID_ROLE_KEYS } from '../utils/roles.js';
 
 const router = Router();
+
+/** True when `userId` is an active admin and no other active admin exists (security review Z13). */
+async function isLastActiveAdmin(db: ReturnType<typeof getDatabase>, userId: string): Promise<boolean> {
+  const target = await db.selectFrom('app_user').select(['role', 'is_active']).where('id', '=', userId).executeTakeFirst();
+  if (!target || target.role !== 'admin' || !target.is_active) return false;
+  const others = await db
+    .selectFrom('app_user')
+    .select(db.fn.count<number>('id').as('count'))
+    .where('role', '=', 'admin')
+    .where('is_active', '=', true)
+    .where('id', '!=', userId)
+    .executeTakeFirstOrThrow();
+  return Number(others.count) === 0;
+}
 
 // Password is only screened for presence and an upper bound here. The
 // full policy (min length, deny list, optional HIBP) runs through
@@ -36,8 +51,8 @@ const updateUserSchema = z.object({
 
 router.get('/', requireAuth, requirePermission('admin.users'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
-  const limit = Math.min(Number(req.query.limit) || 50, 100);
-  const offset = Number(req.query.offset) || 0;
+  // Clamped: negative/fractional values used to reach SQL and 500 (I8).
+  const { limit, offset } = clampPagination(req.query as Record<string, unknown>);
 
   const total = await db
     .selectFrom('app_user')
@@ -59,8 +74,12 @@ router.get('/', requireAuth, requirePermission('admin.users'), asyncHandler(asyn
     .offset(offset)
     .execute();
 
+  // Programmatic callers get a redacted directory (no email / last-login /
+  // chat handles); interactive admin sessions see the full profile.
+  const data = req.authMethod === 'apikey' ? users.map(redactUserForApiKey) : users;
+
   res.json({
-    data: users,
+    data,
     pagination: {
       limit,
       offset,
@@ -70,7 +89,7 @@ router.get('/', requireAuth, requirePermission('admin.users'), asyncHandler(asyn
 }));
 
 // Lightweight list for assignment pickers (any authenticated user)
-router.get('/assignable', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/assignable', requireAuth, asyncHandler(async (_req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
 
   const users = await fetchAssignableUsers(db);
@@ -88,12 +107,21 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
     return;
   }
 
-  res.json(user);
+  // Another user's record is redacted (no email, last login, chat
+  // handles) unless the caller administers users; previously only API-key
+  // callers were redacted, so any session could harvest every profile
+  // (security review A9). Reading your own record stays complete.
+  const isSelf = req.user?.id === req.params.id;
+  const canAdministerUsers = !isSelf && req.user
+    ? (await getPermissionsForRole(req.user.role)).includes('admin.users')
+    : false;
+  const redact = !isSelf && (req.authMethod === 'apikey' || !canAdministerUsers);
+  res.json(redact ? redactUserForApiKey(user) : user);
 }));
 
 router.post(
   '/',
-  requireAuth,
+  requireSession,
   requirePermission('admin.users'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -178,7 +206,7 @@ router.post(
 
 router.put(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.users'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -192,11 +220,25 @@ router.put(
       const user = await db
         .selectFrom('app_user')
         .where('id', '=', req.params.id)
-        .select(['id', 'email'])
+        .select(['id', 'email', 'role', 'is_active'])
         .executeTakeFirst();
 
       if (!user) {
         res.status(404).json({ error: 'User not found' });
+        return;
+      }
+
+      // Admins cannot change their own role or deactivate themselves here
+      // (the deactivate route already refused), and the last active admin
+      // cannot be demoted or deactivated (security review Z13).
+      const removesAdmin = user.role === 'admin' && user.is_active
+        && ((data.role !== undefined && data.role !== 'admin') || data.isActive === false);
+      if (user.id === req.user?.id && ((data.role !== undefined && data.role !== user.role) || data.isActive === false)) {
+        res.status(400).json({ error: 'You cannot change your own role or deactivate your own account' });
+        return;
+      }
+      if (removesAdmin && (await isLastActiveAdmin(db, user.id))) {
+        res.status(409).json({ error: 'Cannot remove the last active administrator' });
         return;
       }
 
@@ -246,7 +288,7 @@ router.put(
 
 router.put(
   '/:id/activate',
-  requireAuth,
+  requireSession,
   requirePermission('admin.users'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -284,7 +326,7 @@ router.put(
 
 router.put(
   '/:id/deactivate',
-  requireAuth,
+  requireSession,
   requirePermission('admin.users'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -304,6 +346,10 @@ router.put(
 
     if (user.id === req.user?.id) {
       res.status(400).json({ error: 'Cannot deactivate your own account' });
+      return;
+    }
+    if (await isLastActiveAdmin(db, user.id)) {
+      res.status(409).json({ error: 'Cannot remove the last active administrator' });
       return;
     }
 

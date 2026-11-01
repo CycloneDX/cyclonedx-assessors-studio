@@ -38,6 +38,7 @@
  *     bucket at storage_path, binary_content is null.
  */
 
+import { contentDisposition } from '../utils/content-disposition.js';
 import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
@@ -150,19 +151,13 @@ const createSchema = z.discriminatedUnion('signatureType', [
   }),
 ]);
 
-// Update schema uses passthrough() on each partial so unknown keys
-// survive the union pick. Without this, a body that targets the
-// digital partial (e.g. publicKeyPem only) is parsed by the
-// electronic branch first, strips everything, and reaches the merge
-// step empty — silently bypassing the private-key check below.
+// The payload is validated against the schema of the signature's own
+// type in the handler (strict, then the merged result in full). A
+// type-blind union of passthrough partials accepted anything, e.g. an
+// HMAC algorithm or a non-string key (security review I5).
 const updateSchema = z.object({
   label: z.string().min(1).max(255).optional(),
-  payload: z
-    .union([
-      electronicPayloadSchema.partial().passthrough(),
-      digitalPayloadSchema.partial().passthrough(),
-    ])
-    .optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Base64 image upload schema. Kept narrow on purpose: we expect small
@@ -469,12 +464,22 @@ router.put(
       let newFingerprint = existing.key_fingerprint;
 
       if (data.payload !== undefined) {
+        const typeSchema = existing.signature_type === 'digital' ? digitalPayloadSchema : electronicPayloadSchema;
+        const partial = typeSchema.partial().strict().safeParse(data.payload);
+        if (!partial.success) {
+          res.status(400).json({ error: 'Invalid signature payload', details: partial.error.issues });
+          return;
+        }
         const plaintext = encryptionService.decrypt(existing.payload_encrypted);
         const existingPayload = plaintext ? JSON.parse(plaintext) : {};
         const merged: Record<string, unknown> = {
           ...existingPayload,
-          ...data.payload,
+          ...partial.data,
         };
+        if (!typeSchema.safeParse(merged).success) {
+          res.status(400).json({ error: 'Invalid signature payload' });
+          return;
+        }
 
         if (
           existing.signature_type === 'digital' &&
@@ -672,7 +677,8 @@ router.post(
 
       const storageProviderName = getStorageProviderName();
       const storageProvider = getStorageProvider();
-      const storageKey = `signatures/${userId}/${req.params.id}-${data.filename}`;
+      // Ids only: the client filename stays in the row (security review I6).
+      const storageKey = `signatures/${userId}/${req.params.id}`;
       const contentHash = computeContentHash(buffer);
       const resolvedContentType = mimeDecision.resolvedType;
 
@@ -779,10 +785,7 @@ router.get(
     }
 
     res.setHeader('Content-Type', row.signature_image_content_type || 'application/octet-stream');
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="${row.signature_image_filename}"`
-    );
+    res.setHeader('Content-Disposition', contentDisposition('inline', row.signature_image_filename));
     res.send(buffer);
   })
 );

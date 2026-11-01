@@ -1,16 +1,19 @@
 import { Router } from 'express';
+import { queryString, likeContains } from '../utils/query.js';
+import { requireProjectRead } from '../utils/access.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import type { AuthRequest } from '../middleware/auth.js';
-import { requireAuth, requirePermission } from '../middleware/auth.js';
+import { requireAuth, requirePermission, getPermissionsForRole } from '../middleware/auth.js';
 import { syncEntityTags, fetchTagsForEntities } from '../utils/tags.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { validatePagination } from '../utils/pagination.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
 import { fetchProjectStandards, fetchStandardsByProjects, syncProjectStandards } from '../utils/project-queries.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -36,13 +39,35 @@ const updateProjectSchema = z.object({
   dueDate: z.string().nullable().optional(),
 });
 
-router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/', requireAuth, requirePermission('projects.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
   const { limit, offset } = validatePagination(req.query);
-  const state = req.query.state as string | undefined;
-  const search = req.query.search as string | undefined;
+  const state = queryString(req.query.state);
+  const search = queryString(req.query.search);
+
+  // Row-visibility scope. Without projects.view_all (i.e. an assessee), a caller
+  // only sees projects they are linked to through an assessment they participate
+  // in as assessor or assessee. Assessors and admins hold projects.view_all.
+  const userPerms = req.user?.id ? await getPermissionsForRole(req.user.role) : [];
+  const projectsViewAll = userPerms.includes('projects.view_all');
+  const scopeUserId = req.user?.id ?? '';
+  // biome-ignore lint/suspicious/noExplicitAny: Kysely expression-builder callback
+  const linkedProjectsOnly = (eb: any) =>
+    eb('id', 'in',
+      eb.selectFrom('assessment')
+        .select('project_id')
+        .where((inner: any) =>
+          inner.or([
+            inner('assessment.id', 'in', inner.selectFrom('assessment_assessor').select('assessment_id').where('user_id', '=', scopeUserId)),
+            inner('assessment.id', 'in', inner.selectFrom('assessment_assessee').select('assessment_id').where('user_id', '=', scopeUserId)),
+          ]),
+        ),
+    );
 
   let query = db.selectFrom('project').selectAll();
+  if (!projectsViewAll) {
+    query = query.where(linkedProjectsOnly);
+  }
 
   if (state) {
     query = query.where('state', '=', state as 'new' | 'in_progress' | 'on_hold' | 'complete' | 'operational' | 'retired');
@@ -58,13 +83,16 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   if (search) {
     query = query.where((eb) =>
       eb.or([
-        eb('name', 'ilike', `%${search}%`),
-        eb('description', 'ilike', `%${search}%`),
+        eb('name', 'ilike', likeContains(search)),
+        eb('description', 'ilike', likeContains(search)),
       ]),
     );
   }
 
   let countQuery = db.selectFrom('project').select(db.fn.count<number>('id').as('count'));
+  if (!projectsViewAll) {
+    countQuery = countQuery.where(linkedProjectsOnly);
+  }
   if (state) {
     countQuery = countQuery.where('state', '=', state as 'new' | 'in_progress' | 'on_hold' | 'complete' | 'operational' | 'retired');
   } else {
@@ -73,8 +101,8 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   if (search) {
     countQuery = countQuery.where((eb) =>
       eb.or([
-        eb('name', 'ilike', `%${search}%`),
-        eb('description', 'ilike', `%${search}%`),
+        eb('name', 'ilike', likeContains(search)),
+        eb('description', 'ilike', likeContains(search)),
       ]),
     );
   }
@@ -113,7 +141,7 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   });
 }));
 
-router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/:id', requireAuth, requireProjectRead(), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
 
   const project = await db
@@ -167,6 +195,14 @@ router.post(
       if (data.tags && data.tags.length > 0) {
         await syncEntityTags(db, 'project_tag', 'project_id', projectId, data.tags);
       }
+
+      await logAudit(db, {
+        entityType: 'project',
+        entityId: projectId,
+        action: 'create',
+        userId: req.user?.id ?? null,
+        changes: { name: data.name, state: data.state },
+      });
 
       logger.info('Project created', {
         projectId,
@@ -231,6 +267,19 @@ router.put(
         await syncEntityTags(db, 'project_tag', 'project_id', req.params.id as string, data.tags);
       }
 
+      // A pure state transition reads better in the activity feed as a
+      // state_change than as a generic update.
+      const stateChanged = data.state !== undefined && data.state !== project.state;
+      await logAudit(db, {
+        entityType: 'project',
+        entityId: req.params.id as string,
+        action: stateChanged && Object.keys(updateData).length === 1 ? 'state_change' : 'update',
+        userId: req.user?.id ?? null,
+        changes: stateChanged
+          ? { from: project.state, to: data.state, ...toSnakeCase(updateData) }
+          : toSnakeCase(updateData),
+      });
+
       logger.info('Project updated', {
         projectId: req.params.id,
         requestId: req.requestId,
@@ -284,6 +333,14 @@ router.delete(
       .where('id', '=', req.params.id as string)
       .execute();
 
+    await logAudit(db, {
+      entityType: 'project',
+      entityId: req.params.id as string,
+      action: 'delete',
+      userId: req.user?.id ?? null,
+      changes: { name: project.name },
+    });
+
     logger.info('Project deleted', {
       projectId: req.params.id as string,
       requestId: req.requestId,
@@ -333,6 +390,7 @@ router.post(
 router.get(
   '/:id/export/summary',
   requireAuth,
+  requireProjectRead(),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
 
@@ -433,7 +491,7 @@ router.get(
  * Returns aggregated metrics for a project's assessments, suitable for
  * rendering a project-level dashboard.
  */
-router.get('/:id/stats', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/:id/stats', requireAuth, requireProjectRead(), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
   const projectId = req.params.id as string;
 

@@ -28,7 +28,7 @@ const titleBuilders: Record<string, TitleBuilder> = {
   'assessment.state_changed': (data) => {
     const state = data.newState as string | undefined;
     if (state === 'in_progress') return 'Assessment Started';
-    if (state === 'completed') return 'Assessment Completed';
+    if (state === 'complete' || state === 'completed') return 'Assessment Completed';
     return 'Assessment State Changed';
   },
   'assessment.created': () => 'New Assessment Created',
@@ -57,7 +57,7 @@ const messageBuilders: Record<string, MessageBuilder> = {
     const state = data.newState as string | undefined;
     const title = (data.assessmentTitle || '') as string;
     if (state === 'in_progress') return `Assessment "${title}" has been started`;
-    if (state === 'completed') return `Assessment "${title}" has been completed`;
+    if (state === 'complete' || state === 'completed') return `Assessment "${title}" has been completed`;
     return `Assessment "${title}" state changed to ${state}`;
   },
   'assessment.created': (data) => {

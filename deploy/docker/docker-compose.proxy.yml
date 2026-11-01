@@ -1,0 +1,70 @@
+###############################################################################
+# CycloneDX Assessors Studio - TLS reverse proxy overlay (Caddy)
+#
+# Puts Caddy in front of the production stack: it obtains and renews a
+# certificate for SITE_ADDRESS automatically, redirects HTTP to HTTPS,
+# and forwards to the app over the internal network, setting
+# X-Forwarded-For/-Proto (the app trusts exactly one hop:
+# TRUST_PROXY_HOPS=1 in the production file).
+#
+#   SITE_ADDRESS=hub.example.com \
+#     docker compose -f docker-compose.production.yml -f docker-compose.proxy.yml up -d
+#
+# Needs: a DNS A/AAAA record for SITE_ADDRESS pointing at this host, and
+# ports 80 and 443 reachable from the internet (for the ACME challenge).
+# For a host without public DNS, set SITE_ADDRESS=localhost to get a
+# certificate from Caddy's internal CA instead.
+###############################################################################
+
+services:
+  proxy:
+    # Pinned multi-arch digest (2026-10-22); refresh with
+    # `docker buildx imagetools inspect caddy:2.10-alpine`.
+    image: caddy:2.10-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    depends_on:
+      - app
+    # The proxy is the one service that must listen on every interface;
+    # the app itself stays on 127.0.0.1. the recorded decision below documents why.
+    x-hardening-decisions:
+      - rule: publish-all-ifaces
+        ports: ["80", "443"]
+        reason: TLS entry point; 80 serves the ACME challenge and the HTTPS redirect, 443 serves users
+        decided: "2026-10-23"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS must be set to the public host name}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /tmp
+    pids_limit: 256
+    mem_limit: 256m
+    memswap_limit: 256m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+    restart: unless-stopped
+
+  app:
+    environment:
+      # Links in emails and the CORS origin must use the public URL.
+      APP_URL: https://${SITE_ADDRESS:?SITE_ADDRESS must be set}
+      CORS_ORIGIN: https://${SITE_ADDRESS:?SITE_ADDRESS must be set}
+      # TLS ends at Caddy, so HSTS is safe to send.
+      HSTS_INCLUDE_SUBDOMAINS: ${HSTS_INCLUDE_SUBDOMAINS:-false}
+
+volumes:
+  caddy_data:
+  caddy_config:

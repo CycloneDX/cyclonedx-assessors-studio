@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { getSetupToken } from '../../utils/setup-token.js';
 import supertest from 'supertest';
 import http from 'http';
 import { Express } from 'express';
@@ -111,11 +112,32 @@ describe('Setup HTTP Routes', () => {
   describe('POST /api/v1/setup - Create initial admin', () => {
     let testCounter = 0;
 
+    // Security review W3: before any admin exists, setup must require the
+    // one-time token from the server log. These run first, while setup is
+    // still incomplete.
+    it.each([
+      ['missing', undefined],
+      ['wrong', 'not-the-setup-token-at-all'],
+    ])('refuses to create the first admin with a %s setup token', async (_label, setupToken) => {
+      const res = await agent.post('/api/v1/setup').send({
+        ...(setupToken ? { setupToken } : {}),
+        username: `squatter_${Date.now()}`,
+        email: `squatter_${Date.now()}@example.com`,
+        displayName: 'Squatter',
+        password: 'SecurePassword123!',
+      });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Invalid setup token');
+      const status = await agent.get('/api/v1/setup/status');
+      expect(status.body.setupComplete).toBe(false);
+    });
+
     it('should create initial admin user with valid data', async () => {
       testCounter++;
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${testCounter}_${Date.now()}`,
           email: `admin_${testCounter}_${Date.now()}@example.com`,
           displayName: `Test Admin ${testCounter}`,
@@ -139,6 +161,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${testCounter}_${Date.now()}`,
           email: `admin_${testCounter}_${Date.now()}@example.com`,
           displayName: `Test Admin ${testCounter}`,
@@ -157,6 +180,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: 'ab',
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -179,6 +203,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: longUsername,
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -199,6 +224,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: 'invalid@username',
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -227,6 +253,7 @@ describe('Setup HTTP Routes', () => {
         const res = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username,
             email: `test_${Date.now()}@example.com`,
             displayName: 'Test User',
@@ -244,6 +271,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: 'not-an-email',
           displayName: 'Test User',
@@ -272,6 +300,7 @@ describe('Setup HTTP Routes', () => {
         const res = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username: `admin_${Date.now()}_${testCounter}`,
             email,
             displayName: 'Test User',
@@ -290,6 +319,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           displayName: '',
@@ -310,6 +340,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           displayName: longName,
@@ -334,6 +365,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -352,6 +384,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -384,6 +417,7 @@ describe('Setup HTTP Routes', () => {
         const res = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username: `admin_${Date.now()}_${testCounter}`,
             email: `test_${Date.now()}_${testCounter}@example.com`,
             displayName: 'Test User',
@@ -399,6 +433,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
           password: 'SecurePassword123!',
@@ -415,6 +450,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           displayName: 'Test User',
           password: 'SecurePassword123!',
@@ -431,6 +467,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           password: 'SecurePassword123!',
@@ -447,6 +484,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -464,6 +502,7 @@ describe('Setup HTTP Routes', () => {
       const firstRes = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${Date.now()}`,
           email: `test_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -475,6 +514,7 @@ describe('Setup HTTP Routes', () => {
         const secondRes = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username: `admin_second_${Date.now()}`,
             email: `test_second_${Date.now()}@example.com`,
             displayName: 'Second Admin',
@@ -495,6 +535,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: `admin_${testCounter}_${Date.now()}`,
           email: `test_${testCounter}_${Date.now()}@example.com`,
           displayName: 'Test User',
@@ -524,6 +565,7 @@ describe('Setup HTTP Routes', () => {
       const firstRes = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username,
           email: email1,
           displayName: 'Test User 1',
@@ -534,6 +576,7 @@ describe('Setup HTTP Routes', () => {
         const secondRes = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username,
             email: email2,
             displayName: 'Test User 2',
@@ -877,6 +920,7 @@ describe('Setup HTTP Routes', () => {
         const setupRes = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username: `flow_admin_${Date.now()}`,
             email: `flow_admin_${Date.now()}@example.com`,
             displayName: 'Flow Test Admin',
@@ -907,6 +951,7 @@ describe('Setup HTTP Routes', () => {
         const setupRes = await agent
           .post('/api/v1/setup')
           .send({
+            setupToken: getSetupToken(),
             username: `blocked_admin_${Date.now()}`,
             email: `blocked_${Date.now()}@example.com`,
             displayName: 'Should Fail',
@@ -923,7 +968,8 @@ describe('Setup HTTP Routes', () => {
     it('should handle empty request body', async () => {
       const res = await agent
         .post('/api/v1/setup')
-        .send({});
+        .send({
+          setupToken: getSetupToken(),});
 
       // May get 400 (validation error) or 403 (setup already complete)
       expect([400, 403]).toContain(res.status);
@@ -944,6 +990,7 @@ describe('Setup HTTP Routes', () => {
       const res = await agent
         .post('/api/v1/setup')
         .send({
+          setupToken: getSetupToken(),
           username: 'ab',
           email: 'invalid',
           displayName: '',
@@ -971,6 +1018,7 @@ describe('Setup HTTP Routes', () => {
       // This tests race condition safety
       const requests = Array(3).fill(null).map((_, i) =>
         agent.post('/api/v1/setup').send({
+          setupToken: getSetupToken(),
           username: `race_${i}_${Date.now()}`,
           email: `race_${i}_${Date.now()}@example.com`,
           displayName: `Race Test ${i}`,
@@ -1064,6 +1112,7 @@ describe('Setup HTTP Routes', () => {
       if (status.body.setupComplete) return;
 
       const res = await agent.post('/api/v1/setup').send({
+        setupToken: getSetupToken(),
         username: `cookie_bootstrap_${Date.now()}`,
         email: `cookie_bootstrap_${Date.now()}@example.com`,
         displayName: 'Cookie Bootstrap Admin',

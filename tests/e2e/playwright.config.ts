@@ -131,6 +131,8 @@ export default defineConfig({
             CORS_ORIGIN: BASE_URL,
             LOG_LEVEL: 'warn',
             REGISTRATION_MODE: 'disabled',
+            // First-run setup token; global-setup sends the same value.
+            SETUP_TOKEN: 'e2e-setup-token-0123456789abcdef',
           },
         },
         {

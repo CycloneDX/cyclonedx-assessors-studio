@@ -16,7 +16,7 @@ import type { NotificationChannel } from './channel.js';
 import type { EventEnvelope } from './types.js';
 import { CHANNEL_WEBHOOK_DISABLED } from './catalog.js';
 import { encryptionService } from '../utils/encryption.js';
-import { resolveAndAssertPublic } from '../utils/url-safety.js';
+import { safeFetch, UnsafeUrlError } from '../utils/safe-fetch.js';
 
 /** Retry delay schedule in milliseconds (attempt index 0 based). */
 const RETRY_DELAYS_MS = [
@@ -140,7 +140,7 @@ export class WebhookChannel implements NotificationChannel {
    * record and performs the HTTP request.
    */
   private async deliverToWebhook(
-    webhook: { id: string; url: string; secret: string; consecutive_failures: number },
+    webhook: { id: string; name?: string; url: string; secret: string; consecutive_failures: number },
     envelope: EventEnvelope,
   ): Promise<void> {
     const db = this.getDb();
@@ -174,7 +174,7 @@ export class WebhookChannel implements NotificationChannel {
    */
   async attemptDelivery(
     deliveryId: string,
-    webhook: { id: string; url: string; secret: string; consecutive_failures: number },
+    webhook: { id: string; name?: string; url: string; secret: string; consecutive_failures: number },
     body: string,
     timestamp: number,
     signature: string,
@@ -183,35 +183,14 @@ export class WebhookChannel implements NotificationChannel {
     const db = this.getDb();
     const config = getConfig();
 
-    // Delivery-time SSRF guard. The URL was screened at config time, but
-    // DNS can drift: a public hostname can rotate onto an internal IP
-    // after the row was saved. Re-resolve right before the fetch and
-    // refuse any target that lands in a private or reserved range. This
-    // also catches the case where an operator changed the URL directly
-    // in the database and bypassed the route-level validation.
-    const safetyCheck = await resolveAndAssertPublic(webhook.url);
-    if (!safetyCheck.safe) {
-      logger.warn('Webhook delivery blocked by delivery-time URL check', {
-        webhookId: webhook.id,
-        deliveryId,
-        reason: safetyCheck.reason,
-      });
-      await this.handleFailure(
-        deliveryId,
-        webhook,
-        null,
-        null,
-        `Delivery blocked: ${safetyCheck.reason ?? 'unsafe URL'}`,
-        config,
-      );
-      return false;
-    }
-
+    // Delivery-time SSRF guard (security review X1). safeFetch re-resolves
+    // the hostname, refuses private/reserved targets, pins the socket to
+    // the validated address (no DNS rebinding) and never follows
+    // redirects, so a 3xx to an internal address is just a failed
+    // delivery. Response bodies are not stored: they were readable back
+    // through the deliveries API, which turned a blind SSRF into a read.
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(webhook.url, {
+      const response = await safeFetch(webhook.url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -222,22 +201,17 @@ export class WebhookChannel implements NotificationChannel {
           'X-Webhook-Signature': `sha256=${signature}`,
         },
         body,
-        signal: controller.signal,
+        timeoutMs,
+        maxResponseBytes: 1024,
       });
 
-      clearTimeout(timeoutId);
-
-      const responseText = await response.text().catch(() => '');
-      const truncatedResponse = responseText.slice(0, 4096);
-
       if (response.ok) {
-        // Success
         await db
           .updateTable('webhook_delivery')
           .set({
             status: 'success',
             http_status: response.status,
-            response_body: truncatedResponse,
+            response_body: null,
             delivered_at: new Date(),
           })
           .where('id', '=', deliveryId)
@@ -253,17 +227,23 @@ export class WebhookChannel implements NotificationChannel {
         }
 
         return true;
-      } else {
-        // HTTP error
-        await this.handleFailure(deliveryId, webhook, response.status, truncatedResponse, null, config);
+      }
+      const reason = response.status >= 300 && response.status < 400
+        ? `Redirect (HTTP ${response.status}) not followed`
+        : null;
+      await this.handleFailure(deliveryId, webhook, response.status, null, reason, config);
+      return false;
+    } catch (error: unknown) {
+      if (error instanceof UnsafeUrlError) {
+        logger.warn('Webhook delivery blocked by delivery-time URL check', {
+          webhookId: webhook.id,
+          deliveryId,
+          reason: error.message,
+        });
+        await this.handleFailure(deliveryId, webhook, null, null, `Delivery blocked: ${error.message}`, config);
         return false;
       }
-    } catch (error: unknown) {
-      const err = error as Record<string, unknown> | null;
-      const errorMessage = err?.name === 'AbortError'
-        ? `Request timed out after ${timeoutMs}ms`
-        : (typeof err?.message === 'string' ? err.message : String(error));
-
+      const errorMessage = error instanceof Error ? error.message : String(error);
       await this.handleFailure(deliveryId, webhook, null, null, errorMessage, config);
       return false;
     }
@@ -275,7 +255,7 @@ export class WebhookChannel implements NotificationChannel {
    */
   private async handleFailure(
     deliveryId: string,
-    webhook: { id: string; url: string; secret: string; consecutive_failures: number },
+    webhook: { id: string; name?: string; url: string; secret: string; consecutive_failures: number },
     httpStatus: number | null,
     responseBody: string | null,
     errorMessage: string | null,
@@ -338,7 +318,9 @@ export class WebhookChannel implements NotificationChannel {
       if (this.emitEvent) {
         this.emitEvent(CHANNEL_WEBHOOK_DISABLED, {
           webhookId: webhook.id,
-          webhookUrl: webhook.url,
+          // Name, not URL: this event fans out to every '*' subscriber,
+          // and a webhook URL can carry a token (security review X11).
+          webhookName: webhook.name ?? webhook.id,
           consecutiveFailures: newFailureCount,
         });
       }
@@ -378,6 +360,7 @@ export class WebhookChannel implements NotificationChannel {
         'webhook_delivery.attempt',
         'webhook_delivery.request_body',
         'webhook.id as webhook_id',
+        'webhook.name',
         'webhook.url',
         'webhook.secret',
         'webhook.consecutive_failures',
@@ -407,6 +390,7 @@ export class WebhookChannel implements NotificationChannel {
         row.delivery_id,
         {
           id: row.webhook_id,
+          name: row.name,
           url: row.url,
           secret: row.secret,
           consecutive_failures: row.consecutive_failures as number,

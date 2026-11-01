@@ -65,6 +65,13 @@
               </div>
             </template>
           </el-table-column>
+          <el-table-column prop="usageCount" :label="t('tagsAdmin.usage')" width="110">
+            <template #default="{ row }">
+              <span :class="row.usageCount > 0 ? 'usage-count usage-count--active' : 'usage-count usage-count--zero'">
+                {{ row.usageCount ?? 0 }}
+              </span>
+            </template>
+          </el-table-column>
           <el-table-column prop="createdAt" :label="t('common.createdAt')" min-width="180">
             <template #default="{ row }">
               {{ formatDateTime(row.createdAt) }}
@@ -390,6 +397,28 @@ onMounted(fetchTags)
 :deep(.el-form-item) .tag-display-pill {
   margin-right: 0;
   margin-bottom: 0;
+}
+
+.usage-count {
+  display: inline-block;
+  min-width: 28px;
+  padding: 1px 8px;
+  border-radius: 12px;
+  font-size: var(--cat-font-size-xs);
+  font-weight: var(--cat-font-weight-medium);
+  text-align: center;
+
+  &--active {
+    background: rgba(63, 185, 80, 0.12);
+    color: #3fb950;
+    border: 1px solid rgba(63, 185, 80, 0.3);
+  }
+
+  &--zero {
+    background: var(--cat-bg-secondary);
+    color: var(--cat-text-tertiary);
+    border: 1px solid var(--cat-border-default);
+  }
 }
 
 .empty-cell {

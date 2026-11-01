@@ -157,6 +157,30 @@ export function buildActionUrl(appUrl: string, envelope: EventEnvelope): string 
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Escaping user-controlled text (security review X4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Slack mrkdwn control characters. `<...>` is Slack's link and broadcast
+ * syntax (`<https://evil|Approve>`, `<!channel>`), so a crafted evidence
+ * name could ping a whole channel or show a spoofed link.
+ */
+function escapeSlack(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Markdown used by Teams and Mattermost: backslash-escape link and
+ * emphasis syntax so names render as text, and break @channel-style
+ * broadcast mentions with a zero-width space.
+ */
+function escapeMarkdown(text: string): string {
+  return text
+    .replace(/([\\`*_{}\[\]()#+\-!|~>])/g, '\\$1')
+    .replace(/@(channel|all|here|everyone)\b/gi, '@\u200b$1');
+}
+
 interface MessageField {
   title: string;
   value: string;
@@ -218,7 +242,7 @@ export function formatSlackMessage(envelope: EventEnvelope, appUrl: string): Rec
       type: 'section',
       fields: fields.map((f) => ({
         type: 'mrkdwn',
-        text: `*${f.title}:*\n${f.value}`,
+        text: `*${f.title}:*\n${escapeSlack(f.value)}`,
       })),
     });
   }
@@ -226,7 +250,7 @@ export function formatSlackMessage(envelope: EventEnvelope, appUrl: string): Rec
   if (envelope.actor.displayName) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `Action by *${envelope.actor.displayName}*` },
+      text: { type: 'mrkdwn', text: `Action by *${escapeSlack(envelope.actor.displayName)}*` },
     });
   }
 
@@ -259,16 +283,16 @@ export function formatTeamsMessage(envelope: EventEnvelope, appUrl: string): Rec
 
   const facts: Array<{ title: string; value: string }> = [];
   for (const f of fields) {
-    facts.push({ title: f.title, value: f.value });
+    facts.push({ title: f.title, value: escapeMarkdown(f.value) });
   }
   if (envelope.actor.displayName) {
-    facts.push({ title: 'By', value: envelope.actor.displayName });
+    facts.push({ title: 'By', value: escapeMarkdown(envelope.actor.displayName) });
   }
 
   const body: Record<string, unknown>[] = [
     {
       type: 'TextBlock',
-      text: summary,
+      text: escapeMarkdown(summary),
       weight: 'Bolder',
       size: 'Medium',
     },
@@ -324,21 +348,21 @@ export function formatMattermostMessage(envelope: EventEnvelope, appUrl: string)
   const mattermostFields = fields.map((f) => ({
     short: true,
     title: f.title,
-    value: f.value,
+    value: escapeMarkdown(f.value),
   }));
 
   if (envelope.actor.displayName) {
     mattermostFields.push({
       short: false,
       title: 'Action by',
-      value: envelope.actor.displayName,
+      value: escapeMarkdown(envelope.actor.displayName),
     });
   }
 
   const attachment: Record<string, unknown> = {
     fallback: summary,
     color,
-    title: summary,
+    title: escapeMarkdown(summary),
     fields: mattermostFields,
   };
 

@@ -1,11 +1,14 @@
 import { Router } from 'express';
+// Exports are object-scoped as well: today every role with an export
+// permission also has view_all, but that should not be the only control
+// (security review Z13).
+import { requireAssessmentRead, requireProjectRead } from '../utils/access.js';
 import type { Response } from 'express';
-import PDFDocument from 'pdfkit';
 import { getDatabase } from '../db/connection.js';
 import { asyncHandler } from '../utils/route-helpers.js';
 import { logger } from '../utils/logger.js';
 import type { AuthRequest } from '../middleware/auth.js';
-import { requireAuth, requirePermission } from '../middleware/auth.js';
+import { requireSession, requirePermission } from '../middleware/auth.js';
 import {
   assessorFromUserRow,
   attestationFromRow,
@@ -33,6 +36,18 @@ import {
   toJsfSigner,
 } from '../utils/export-affirmation.js';
 import { validateBom } from '../cdxspec/validator/validate.js';
+import { fetchProjectStandards } from '../utils/project-queries.js';
+import { buildAssessmentReportModel } from '../services/assessment-report/model.js';
+import { renderAssessmentReportPdf } from '../services/assessment-report/render-pdf.js';
+import {
+  createReportDocument,
+  drawTable,
+  formatPercent,
+  renderToBuffer,
+  sectionHeading,
+  stampFooters,
+  type PdfDoc,
+} from '../utils/pdf-report.js';
 
 const router = Router();
 
@@ -455,142 +470,21 @@ async function buildAssessmentBOM(
 
 type ExportDb = ReturnType<typeof getDatabase>;
 
-async function fetchExportAssessors(db: ExportDb, assessmentId: string) {
-  return db
-    .selectFrom('assessment_assessor')
-    .innerJoin('app_user', 'app_user.id', 'assessment_assessor.user_id')
-    .where('assessment_assessor.assessment_id', '=', assessmentId)
-    .select(['app_user.display_name', 'app_user.email'])
-    .execute();
-}
-
-async function fetchExportAssessees(db: ExportDb, assessmentId: string) {
-  return db
-    .selectFrom('assessment_assessee')
-    .innerJoin('app_user', 'app_user.id', 'assessment_assessee.user_id')
-    .where('assessment_assessee.assessment_id', '=', assessmentId)
-    .select(['app_user.display_name', 'app_user.email'])
-    .execute();
-}
-
-async function fetchExportAssessmentRequirements(db: ExportDb, assessmentId: string) {
-  return db
-    .selectFrom('assessment_requirement')
-    .innerJoin('requirement', 'requirement.id', 'assessment_requirement.requirement_id')
-    .where('assessment_requirement.assessment_id', '=', assessmentId)
-    .select([
-      'assessment_requirement.id',
-      'assessment_requirement.result',
-      'assessment_requirement.rationale',
-      'requirement.identifier',
-      'requirement.name',
-    ])
-    .execute();
-}
-
-async function fetchExportEvidenceRecords(
-  db: ExportDb,
-  assessmentId: string,
-  hasRequirements: boolean,
-): Promise<Record<string, unknown>[]> {
-  if (!hasRequirements) return [];
-  return db
-    .selectFrom('evidence')
-    .innerJoin('assessment_requirement_evidence', 'assessment_requirement_evidence.evidence_id', 'evidence.id')
-    .innerJoin('assessment_requirement', 'assessment_requirement.id', 'assessment_requirement_evidence.assessment_requirement_id')
-    .innerJoin('app_user', 'app_user.id', 'evidence.author_id')
-    .where('assessment_requirement.assessment_id', '=', assessmentId)
-    .select([
-      'evidence.name',
-      'evidence.state',
-      'evidence.description',
-      'app_user.display_name',
-    ])
-    .execute();
-}
-
-async function fetchExportAttestationData(db: ExportDb, assessmentId: string) {
-  const attestation = await db
-    .selectFrom('attestation')
-    .where('assessment_id', '=', assessmentId)
-    .selectAll()
-    .executeTakeFirst();
-
-  let attestationRequirements: Record<string, unknown>[] = [];
-  if (attestation) {
-    attestationRequirements = await db
-      .selectFrom('attestation_requirement')
-      .innerJoin('requirement', 'requirement.id', 'attestation_requirement.requirement_id')
-      .where('attestation_requirement.attestation_id', '=', attestation.id)
-      .select([
-        'attestation_requirement.conformance_score',
-        'attestation_requirement.confidence_score',
-        'attestation_requirement.conformance_rationale',
-        'requirement.identifier',
-        'requirement.name',
-      ])
-      .execute();
-  }
-
-  return { attestation, attestationRequirements };
-}
-
-/**
- * Fetch all necessary data for PDF generation.
- */
-async function fetchPDFData(assessmentId: string) {
-  const db = getDatabase();
-
-  const assessment = await db
-    .selectFrom('assessment')
-    .where('id', '=', assessmentId)
-    .selectAll()
-    .executeTakeFirst();
-
-  if (!assessment) {
-    throw new Error('Assessment not found');
-  }
-
-  const project = assessment.project_id
-    ? await db
-        .selectFrom('project')
-        .where('id', '=', assessment.project_id)
-        .selectAll()
-        .executeTakeFirst()
-    : null;
-
-  const assessors = await fetchExportAssessors(db, assessmentId);
-  const assessees = await fetchExportAssessees(db, assessmentId);
-  const assessmentRequirements = await fetchExportAssessmentRequirements(db, assessmentId);
-  const evidenceRecords = await fetchExportEvidenceRecords(
-    db,
-    assessmentId,
-    assessmentRequirements.length > 0,
-  );
-  const { attestation, attestationRequirements } = await fetchExportAttestationData(db, assessmentId);
-
-  return {
-    assessment,
-    project,
-    assessors,
-    assessees,
-    assessmentRequirements,
-    evidenceRecords,
-    attestation,
-    attestationRequirements,
-  };
+function formatDate(value: unknown): string {
+  return value ? new Date(value as string).toLocaleDateString('en-US') : 'N/A';
 }
 
 /**
  * Add title page to PDF.
  */
 function addTitlePage(
-  doc: InstanceType<typeof PDFDocument>,
-  assessment: Record<string, unknown>,
+  doc: PdfDoc,
+  title: string,
+  subtitle: string,
   project: Record<string, unknown> | null | undefined,
 ): void {
-  doc.fontSize(36).fillColor('#000000').text('Assessment Report', { align: 'center' });
-  doc.fontSize(24).text(assessment.title as string, { align: 'center' });
+  doc.fontSize(36).fillColor('#000000').text(title, { align: 'center' });
+  doc.fontSize(24).text(subtitle, { align: 'center' });
   doc.moveDown();
 
   doc.fontSize(12);
@@ -602,249 +496,228 @@ function addTitlePage(
   doc.moveDown();
 }
 
-/**
- * Add assessment summary section to PDF.
- */
-function addAssessmentSummarySection(
-  doc: InstanceType<typeof PDFDocument>,
-  assessment: Record<string, unknown>,
-  assessors: Record<string, unknown>[],
-  assessees: Record<string, unknown>[],
-): void {
-  doc.fontSize(16).fillColor('#000000').text('Assessment Summary', { underline: true });
-  doc.fontSize(11).moveDown(0.5);
-
-  if (assessment.description) {
-    doc.text(`Description: ${assessment.description}`);
-    doc.moveDown();
-  }
-
-  doc.text(`State: ${assessment.state}`);
-  doc.text(`Start Date: ${assessment.start_date ? new Date(assessment.start_date as string).toLocaleDateString('en-US') : 'N/A'}`);
-  doc.text(`Due Date: ${assessment.due_date ? new Date(assessment.due_date as string).toLocaleDateString('en-US') : 'N/A'}`);
-  doc.text(`End Date: ${assessment.end_date ? new Date(assessment.end_date as string).toLocaleDateString('en-US') : 'N/A'}`);
-
-  if (assessors.length > 0) {
-    doc.text(`Assessors: ${assessors.map(a => a.display_name).join(', ')}`);
-  }
-  if (assessees.length > 0) {
-    doc.text(`Assessees: ${assessees.map(a => a.display_name).join(', ')}`);
-  }
-
-  doc.moveDown();
-}
-
-/**
- * Add requirements section table to PDF.
- */
-function addRequirementsSection(
-  doc: InstanceType<typeof PDFDocument>,
-  assessmentRequirements: Record<string, unknown>[],
-  footerY: number,
-  addFooter: () => void,
-): void {
-  doc.fontSize(16).fillColor('#000000').text('Requirements', { underline: true });
-  doc.fontSize(10).moveDown(0.5);
-
-  const tableStartY = doc.y;
-  const colWidths = {
-    id: 60,
-    name: 130,
-    result: 70,
-    rationale: 180,
-  };
-
-  // Table header
-  doc.fillColor('#f5f5f5').rect(50, doc.y, doc.page.width - 100, 25).fill();
-  doc.fillColor('#000000').fontSize(10);
-
-  let tableX = 50;
-  doc.text('ID', tableX, doc.y + 5, { width: colWidths.id, align: 'left' });
-  tableX += colWidths.id;
-  doc.text('Name', tableX, tableStartY + 5, { width: colWidths.name, align: 'left' });
-  tableX += colWidths.name;
-  doc.text('Result', tableX, tableStartY + 5, { width: colWidths.result, align: 'left' });
-  tableX += colWidths.result;
-  doc.text('Rationale', tableX, tableStartY + 5, { width: colWidths.rationale, align: 'left' });
-
-  doc.y = tableStartY + 25;
-
-  // Table rows
-  for (const req of assessmentRequirements) {
-    const result = req.result ? (req.result as string).toUpperCase() : 'N/A';
-    const rationale = req.rationale || 'N/A';
-
-    const rowHeight = 20;
-    if (doc.y + rowHeight > footerY) {
-      addFooter();
-      doc.addPage();
-    }
-
-    tableX = 50;
-    doc.fontSize(9);
-    doc.text(String(req.identifier || ''), tableX, doc.y, { width: colWidths.id, align: 'left' });
-    tableX += colWidths.id;
-    doc.text(String(req.name || ''), tableX, doc.y, { width: colWidths.name, align: 'left' });
-    tableX += colWidths.name;
-    doc.text(result, tableX, doc.y, { width: colWidths.result, align: 'left' });
-    tableX += colWidths.result;
-    doc.text(rationale as string, tableX, doc.y, { width: colWidths.rationale, align: 'left' });
-
-    doc.moveDown();
-  }
-
-  doc.moveDown();
-}
-
-/**
- * Add evidence summary section to PDF.
- */
-function addEvidenceSection(
-  doc: InstanceType<typeof PDFDocument>,
-  evidenceRecords: Record<string, unknown>[],
-  footerY: number,
-  addFooter: () => void,
-): void {
-  doc.addPage();
-
-  doc.fontSize(16).fillColor('#000000').text('Evidence Summary', { underline: true });
-  doc.fontSize(11).moveDown(0.5);
-
-  for (const ev of evidenceRecords) {
-    if (doc.y + 40 > footerY) {
-      addFooter();
-      doc.addPage();
-    }
-
-    doc.fontSize(10).text(`Name: ${ev.name}`);
-    doc.fontSize(9).fillColor('#666666');
-    doc.text(`State: ${ev.state}`);
-    doc.text(`Author: ${ev.display_name || 'Unknown'}`);
-    if (ev.description) {
-      doc.text(`Description: ${ev.description}`);
-    }
-    doc.moveDown();
-  }
-
-  addFooter();
-}
-
-/**
- * Add attestation summary section to PDF.
- */
-function addAttestationSection(
-  doc: InstanceType<typeof PDFDocument>,
-  attestation: Record<string, unknown>,
-  attestationRequirements: Record<string, unknown>[],
-  footerY: number,
-  addFooter: () => void,
-): void {
-  doc.addPage();
-
-  doc.fontSize(16).fillColor('#000000').text('Attestation Summary', { underline: true });
-  doc.fontSize(11).moveDown(0.5);
-
-  if (typeof attestation.summary === 'string' && attestation.summary.length > 0) {
-    doc.text(`Summary: ${attestation.summary}`);
-    doc.moveDown();
-  }
-
-  doc.text('Conformance Scores by Requirement:');
-  doc.moveDown(0.5);
-
-  for (const ar of attestationRequirements) {
-    if (doc.y + 20 > footerY) {
-      addFooter();
-      doc.addPage();
-    }
-
-    const conformancePercent = ar.conformance_score ? ((ar.conformance_score as number) * 100).toFixed(0) : 'N/A';
-    const confidencePercent = ar.confidence_score ? ((ar.confidence_score as number) * 100).toFixed(0) : 'N/A';
-
-    doc.fontSize(9);
-    doc.text(`${ar.identifier}: ${conformancePercent}% conformance, ${confidencePercent}% confidence`);
-    if (ar.conformance_rationale) {
-      doc.fontSize(8).fillColor('#666666');
-      doc.text(`Rationale: ${ar.conformance_rationale}`);
-      doc.fillColor('#000000');
-    }
-    doc.moveDown(0.5);
-  }
-
-  addFooter();
-}
-
 async function generateAssessmentPDF(assessmentId: string): Promise<Buffer> {
-  // Fetch all data needed for PDF
-  const {
-    assessment,
-    project,
-    assessors,
-    assessees,
-    assessmentRequirements,
-    evidenceRecords,
-    attestation,
-    attestationRequirements,
-  } = await fetchPDFData(assessmentId);
-
-  // Create PDF document
-  const doc = new PDFDocument({
-    size: 'A4',
-    margin: 50,
-  });
-
-  const pageHeight = doc.page.height;
-  const pageBottomMargin = 50;
-  const footerY = pageHeight - pageBottomMargin;
-  const now = new Date();
-  const timestamp = now.toISOString();
-
-  // Add footer on every page
-  const addFooter = () => {
-    doc.fontSize(9).fillColor('#666666');
-    doc.text('Generated by CycloneDX Assessors Studio', 50, footerY);
-    doc.text(timestamp, 50, footerY + 15);
-  };
-
-  // Build document sections
-  addTitlePage(doc, assessment, project);
-  addFooter();
-  doc.addPage();
-
-  addAssessmentSummarySection(doc, assessment, assessors, assessees);
-  addFooter();
-  doc.addPage();
-
-  addRequirementsSection(doc, assessmentRequirements, footerY, addFooter);
-  addFooter();
-
-  if (evidenceRecords.length > 0) {
-    addEvidenceSection(doc, evidenceRecords, footerY, addFooter);
-  }
-
-  if (attestation && attestationRequirements.length > 0) {
-    addAttestationSection(doc, attestation, attestationRequirements, footerY, addFooter);
-  }
-
-  // Convert PDF to buffer
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-
-    doc.on('data', (chunk) => {
-      chunks.push(chunk);
-    });
-
-    doc.on('end', () => {
-      resolve(Buffer.concat(chunks));
-    });
-
-    doc.on('error', reject);
-
-    doc.end();
-  });
+  const model = await buildAssessmentReportModel(getDatabase(), assessmentId);
+  return renderAssessmentReportPdf(model);
 }
 
-router.get('/assessment/:assessmentId', requireAuth, requirePermission('export.cyclonedx'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+// ---- Project PDF report ----
+
+type ProjectAssessmentRow = {
+  id: string;
+  title: string;
+  state: string;
+  due_date?: Date | null;
+  standard_id?: string | null;
+  standard_name: string | null;
+  standard_version?: string | null;
+};
+
+function standardLabel(name: string, version: string | null | undefined): string {
+  // Some imported names already end with their version.
+  return version && !name.includes(version) ? `${name} ${version}` : name;
+}
+
+/**
+ * The project's own standards plus any an assessment is scoped to, so
+ * the report names every standard it covers.
+ */
+async function fetchProjectStandardLabels(
+  db: ExportDb,
+  projectId: string,
+  assessments: ProjectAssessmentRow[],
+): Promise<string[]> {
+  const standards = new Map<string, string>();
+  for (const s of await fetchProjectStandards(db, projectId)) {
+    standards.set(s.id, standardLabel(s.name, s.version));
+  }
+  for (const a of assessments) {
+    if (a.standard_id && a.standard_name && !standards.has(a.standard_id)) {
+      standards.set(a.standard_id, standardLabel(a.standard_name, a.standard_version));
+    }
+  }
+  return [...standards.values()];
+}
+
+async function fetchRequirementCounts(db: ExportDb, assessmentIds: string[]) {
+  const counts = new Map<string, { total: number; assessed: number }>();
+  const rows = await db
+    .selectFrom('assessment_requirement')
+    .where('assessment_id', 'in', assessmentIds)
+    .select(['assessment_id', 'result'])
+    .execute();
+  for (const row of rows) {
+    const entry = counts.get(row.assessment_id) ?? { total: 0, assessed: 0 };
+    entry.total += 1;
+    if (row.result) entry.assessed += 1;
+    counts.set(row.assessment_id, entry);
+  }
+  return counts;
+}
+
+/**
+ * Attestation ids plus the mean attested conformance per assessment
+ * (null when an attestation has no scored requirements).
+ */
+async function fetchAttestationScores(db: ExportDb, assessmentIds: string[]) {
+  const rows = await db
+    .selectFrom('attestation')
+    .leftJoin('attestation_requirement', 'attestation_requirement.attestation_id', 'attestation.id')
+    .where('attestation.assessment_id', 'in', assessmentIds)
+    .select(['attestation.id as attestation_id', 'attestation.assessment_id', 'attestation_requirement.conformance_score'])
+    .execute();
+  const attestationIds = new Set<string>();
+  const sums = new Map<string, { sum: number; n: number }>();
+  for (const row of rows) {
+    attestationIds.add(row.attestation_id);
+    const agg = sums.get(row.assessment_id) ?? { sum: 0, n: 0 };
+    if (row.conformance_score !== null && row.conformance_score !== undefined) {
+      agg.sum += Number(row.conformance_score);
+      agg.n += 1;
+    }
+    sums.set(row.assessment_id, agg);
+  }
+  const scores = new Map<string, number | null>();
+  for (const [id, agg] of sums) {
+    scores.set(id, agg.n > 0 ? agg.sum / agg.n : null);
+  }
+  return { attestationIds: [...attestationIds], scores };
+}
+
+async function countProjectEvidence(db: ExportDb, assessmentIds: string[]): Promise<number> {
+  const rows = await db
+    .selectFrom('assessment_requirement_evidence')
+    .innerJoin('assessment_requirement', 'assessment_requirement.id', 'assessment_requirement_evidence.assessment_requirement_id')
+    .where('assessment_requirement.assessment_id', 'in', assessmentIds)
+    .select('assessment_requirement_evidence.evidence_id')
+    .distinct()
+    .execute();
+  return rows.length;
+}
+
+async function countClaims(db: ExportDb, attestationIds: string[]): Promise<number> {
+  if (attestationIds.length === 0) return 0;
+  const result = await db
+    .selectFrom('claim')
+    .where('attestation_id', 'in', attestationIds)
+    .select(db.fn.count<number>('id').as('count'))
+    .executeTakeFirst();
+  return Number(result?.count ?? 0);
+}
+
+async function fetchProjectPDFData(projectId: string) {
+  const db = getDatabase();
+
+  const project = await db
+    .selectFrom('project')
+    .where('id', '=', projectId)
+    .selectAll()
+    .executeTakeFirst();
+  if (!project) {
+    throw new Error('Project not found');
+  }
+
+  const assessments: ProjectAssessmentRow[] = await db
+    .selectFrom('assessment')
+    .leftJoin('standard', 'standard.id', 'assessment.standard_id')
+    .where('assessment.project_id', '=', projectId)
+    .where('assessment.deleted_at', 'is', null)
+    .select([
+      'assessment.id',
+      'assessment.title',
+      'assessment.state',
+      'assessment.due_date',
+      'assessment.standard_id',
+      'standard.name as standard_name',
+      'standard.version as standard_version',
+    ])
+    .orderBy('assessment.created_at', 'asc')
+    .execute();
+  const assessmentIds = assessments.map((a) => a.id);
+  const standards = await fetchProjectStandardLabels(db, projectId, assessments);
+
+  if (assessmentIds.length === 0) {
+    return { project, standards, assessments: [], totals: { evidence: 0, claims: 0, attestations: 0 } };
+  }
+
+  const requirementCounts = await fetchRequirementCounts(db, assessmentIds);
+  const { attestationIds, scores } = await fetchAttestationScores(db, assessmentIds);
+
+  return {
+    project,
+    standards,
+    assessments: assessments.map((a) => ({
+      ...a,
+      requirements: requirementCounts.get(a.id) ?? { total: 0, assessed: 0 },
+      // undefined: no attestation; null: attestation without scores.
+      attestationScore: scores.get(a.id),
+    })),
+    totals: {
+      evidence: await countProjectEvidence(db, assessmentIds),
+      claims: await countClaims(db, attestationIds),
+      attestations: attestationIds.length,
+    },
+  };
+}
+
+async function generateProjectPDF(projectId: string): Promise<Buffer> {
+  const { project, standards, assessments, totals } = await fetchProjectPDFData(projectId);
+
+  const doc = createReportDocument();
+
+  addTitlePage(doc, 'Project Report', project.name, null);
+  doc.addPage();
+
+  sectionHeading(doc, 'Project Summary');
+  doc.fontSize(11);
+  if (project.description) {
+    doc.text(`Description: ${project.description}`);
+    doc.moveDown();
+  }
+  doc.text(`State: ${project.state}`);
+  doc.text(`Start Date: ${formatDate(project.start_date)}`);
+  doc.text(`Due Date: ${formatDate(project.due_date)}`);
+  doc.text(`Standards: ${standards.length > 0 ? standards.join(', ') : 'None'}`);
+  doc.moveDown();
+
+  const complete = assessments.filter((a) => a.state === 'complete').length;
+  const inProgress = assessments.filter((a) => a.state === 'in_progress').length;
+  doc.text(`Assessments: ${assessments.length} (${complete} complete, ${inProgress} in progress)`);
+  doc.text(`Evidence items: ${totals.evidence}`);
+  doc.text(`Claims: ${totals.claims}`);
+  doc.text(`Attestations: ${totals.attestations}`);
+  doc.moveDown();
+
+  sectionHeading(doc, 'Assessments');
+  if (assessments.length === 0) {
+    doc.fontSize(10).text('This project has no assessments.');
+  } else {
+    drawTable(
+      doc,
+      [
+        { header: 'Assessment', width: 135 },
+        { header: 'Standard', width: 115 },
+        { header: 'State', width: 60 },
+        { header: 'Due', width: 60 },
+        { header: 'Assessed', width: 55 },
+        { header: 'Conformance', width: 70 },
+      ],
+      assessments.map((a) => [
+        a.title,
+        a.standard_name ?? 'N/A',
+        a.state.replace(/_/g, ' '),
+        formatDate(a.due_date),
+        a.requirements.total > 0 ? `${a.requirements.assessed} / ${a.requirements.total}` : 'N/A',
+        a.attestationScore === undefined ? 'Not attested' : formatPercent(a.attestationScore),
+      ]),
+    );
+  }
+
+  stampFooters(doc, new Date().toISOString());
+  return renderToBuffer(doc);
+}
+
+router.get('/assessment/:assessmentId', requireSession, requirePermission('export.cyclonedx'), requireAssessmentRead('assessmentId'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const { assessmentId } = req.params as { assessmentId: string };
   const specVersion = parseSpecVersion(req);
   const db = getDatabase();
@@ -883,7 +756,7 @@ router.get('/assessment/:assessmentId', requireAuth, requirePermission('export.c
   });
 }));
 
-router.get('/assessment/:assessmentId/pdf', requireAuth, requirePermission('export.pdf'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/assessment/:assessmentId/pdf', requireSession, requirePermission('export.pdf'), requireAssessmentRead('assessmentId'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const { assessmentId } = req.params as { assessmentId: string };
   const db = getDatabase();
 
@@ -921,7 +794,43 @@ router.get('/assessment/:assessmentId/pdf', requireAuth, requirePermission('expo
   });
 }));
 
-router.get('/project/:projectId', requireAuth, requirePermission('export.cyclonedx'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/project/:projectId/pdf', requireSession, requirePermission('export.pdf'), requireProjectRead('projectId'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const { projectId } = req.params as { projectId: string };
+  const db = getDatabase();
+
+  const project = await db
+    .selectFrom('project')
+    .where('id', '=', projectId)
+    .select(['id', 'name'])
+    .executeTakeFirst();
+
+  if (!project) {
+    res.status(404).json({ error: 'Project not found' });
+    return;
+  }
+
+  const pdfBuffer = await generateProjectPDF(projectId);
+
+  // Sanitize the name to prevent header injection, as for assessments.
+  const safeSlug = project.name.replace(/[^a-z0-9]/gi, '-').toLowerCase().substring(0, 200);
+  const filename = `project-${safeSlug}-report.pdf`;
+  const encodedFilename = encodeURIComponent(filename);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${filename}"; filename*=UTF-8''${encodedFilename}`
+  );
+  res.setHeader('Content-Length', pdfBuffer.length);
+
+  res.send(pdfBuffer);
+
+  logger.info('Project PDF exported', {
+    projectId,
+    requestId: req.requestId,
+  });
+}));
+
+router.get('/project/:projectId', requireSession, requirePermission('export.cyclonedx'), requireProjectRead('projectId'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const { projectId } = req.params as { projectId: string };
   const specVersion = parseSpecVersion(req);
   const db = getDatabase();

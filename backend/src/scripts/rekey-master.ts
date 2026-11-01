@@ -12,6 +12,7 @@
  * Usage: npx tsx src/scripts/rekey-master.ts
  */
 
+import { rekeyAllColumns } from '../utils/encrypted-columns.js';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -31,7 +32,7 @@ async function main() {
   }
 
   const newMasterKeyHex = process.env.MASTER_ENCRYPTION_KEY;
-  if (!newMasterKeyHex || newMasterKeyHex.length < 64) {
+  if (!newMasterKeyHex || !/^[0-9a-fA-F]{64}$/.test(newMasterKeyHex)) {
     logger.error('MASTER_ENCRYPTION_KEY (new key) must be set to a 64-character hex string');
     process.exit(1);
   }
@@ -51,26 +52,8 @@ async function main() {
   process.env.MASTER_ENCRYPTION_KEY = savedNewKey;
 
   // Now perform the rekey using the rekeyMaster function
-  const result = await rekeyMaster(
-    db,
-    oldMasterKeyHex,
-    async function* () {
-      const webhooks = await db
-        .selectFrom('webhook')
-        .select(['id', 'secret'])
-        .execute();
-      for (const wh of webhooks) {
-        yield { id: wh.id, value: wh.secret };
-      }
-    },
-    async (id, value) => {
-      await db
-        .updateTable('webhook')
-        .set({ secret: value, updated_at: new Date() })
-        .where('id', '=', id)
-        .execute();
-    },
-  );
+  // Every encrypted column, from the shared list (security review X7).
+  const result = await rekeyAllColumns(db, (read, write) => rekeyMaster(db, oldMasterKeyHex, read, write));
 
   logger.info('Master key rotation complete', {
     processed: result.processed,

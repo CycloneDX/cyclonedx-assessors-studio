@@ -116,7 +116,9 @@
     "password": "Passwort",
     "signIn": "Anmelden",
     "enterCredentials": "Benutzername und Passwort eingeben",
-    "loginFailed": "Anmeldung fehlgeschlagen. Bitte versuchen Sie es erneut."
+    "loginFailed": "Anmeldung fehlgeschlagen. Bitte versuchen Sie es erneut.",
+    "forgotPassword": "Passwort vergessen?",
+    "resetDone": "Ihr Passwort wurde zurückgesetzt. Melden Sie sich mit Ihrem neuen Passwort an."
   },
   "setup": {
     "welcome": "Willkommen bei Assessors Studio",
@@ -583,5 +585,23 @@
   },
   "dropZones": {
     "makeRootLevel": "Hierher ziehen, um auf Root-Ebene zu platzieren"
+  },
+  "passwordReset": {
+    "forgotTitle": "Passwort zurücksetzen",
+    "forgotIntro": "Geben Sie die E-Mail-Adresse Ihres Kontos ein. Wenn sie zu einem Konto gehört, senden wir Ihnen einen Link zum Festlegen eines neuen Passworts.",
+    "email": "E-Mail-Adresse",
+    "enterEmail": "Bitte geben Sie Ihre E-Mail-Adresse ein",
+    "sendLink": "Link zum Zurücksetzen senden",
+    "requestSent": "Wenn zu dieser Adresse ein Konto existiert, ist ein Link zum Zurücksetzen unterwegs. Der Link ist 30 Minuten gültig.",
+    "requestFailed": "Die Anfrage konnte nicht gesendet werden. Bitte versuchen Sie es erneut.",
+    "resetTitle": "Neues Passwort festlegen",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "minLength": "Mindestens {n} Zeichen",
+    "mismatch": "Die Passwörter stimmen nicht überein",
+    "setPassword": "Neues Passwort speichern",
+    "missingToken": "Dieser Link zum Zurücksetzen ist unvollständig. Öffnen Sie den Link aus Ihrer E-Mail erneut oder fordern Sie einen neuen an.",
+    "resetFailed": "Das Passwort konnte nicht zurückgesetzt werden. Der Link ist möglicherweise abgelaufen; fordern Sie einen neuen an.",
+    "backToLogin": "Zurück zur Anmeldung"
   }
 }

@@ -48,55 +48,49 @@ export async function initializeEventSystem(): Promise<void> {
   const inAppChannel = new InAppChannel(() => getDatabase());
   channelRegistry.register(inAppChannel);
 
-  // Webhook channel: registered when WEBHOOK_ENABLED=true
+  // Register every enabled channel first, then initialize them all once.
+  // initializeAll used to run before the email and chat channels were
+  // registered, so they were never initialized (no SMTP transport, so no
+  // email at all) and never subscribed (security review X9).
   const config = getConfig();
+  const systemEmitter = (type: string, data: Record<string, unknown>) => {
+    eventBus!.emit(type, data, { userId: null, displayName: 'System' });
+  };
+
+  let webhookChannel: WebhookChannel | null = null;
   if (config.WEBHOOK_ENABLED) {
-    const webhookChannel = new WebhookChannel(() => getDatabase());
+    webhookChannel = new WebhookChannel(() => getDatabase());
     channelRegistry.register(webhookChannel);
-
-    // Wire the emitter callback after initialization so the webhook
-    // channel can emit events (e.g., channel.webhook.disabled) without
-    // a circular dependency on the event bus.
-    await channelRegistry.initializeAll(eventBus!);
-    webhookChannel.setEmitter((type, data) => {
-      if (eventBus) {
-        eventBus.emit(type, data, { userId: null, displayName: 'System' });
-      }
-    });
-  } else {
-    await channelRegistry.initializeAll(eventBus!);
   }
 
-  // Email channel: registered when SMTP_ENABLED=true
   if (config.SMTP_ENABLED) {
-    const emailChannel = new EmailChannel(() => getDatabase());
-    channelRegistry.register(emailChannel);
+    channelRegistry.register(new EmailChannel(() => getDatabase()));
   }
 
-  // Chat channels: registered when *_ENABLED=true
   if (config.SLACK_ENABLED) {
     const slackChannel = new SlackChannel(() => getDatabase());
     channelRegistry.register(slackChannel);
-    slackChannel.setEmitter((type, data) => {
-      eventBus!.emit(type, data, { userId: null, displayName: 'System' });
-    });
+    slackChannel.setEmitter(systemEmitter);
   }
 
   if (config.TEAMS_ENABLED) {
     const teamsChannel = new TeamsChannel(() => getDatabase());
     channelRegistry.register(teamsChannel);
-    teamsChannel.setEmitter((type, data) => {
-      eventBus!.emit(type, data, { userId: null, displayName: 'System' });
-    });
+    teamsChannel.setEmitter(systemEmitter);
   }
 
   if (config.MATTERMOST_ENABLED) {
     const mattermostChannel = new MattermostChannel(() => getDatabase());
     channelRegistry.register(mattermostChannel);
-    mattermostChannel.setEmitter((type, data) => {
-      eventBus!.emit(type, data, { userId: null, displayName: 'System' });
-    });
+    mattermostChannel.setEmitter(systemEmitter);
   }
+
+  await channelRegistry.initializeAll(eventBus!);
+
+  // Wire the webhook emitter after initialization so the webhook channel
+  // can emit events (e.g., channel.webhook.disabled) without a circular
+  // dependency on the event bus.
+  webhookChannel?.setEmitter(systemEmitter);
 
   // Initialize rules engine
   rulesEngine = new RulesEngine(() => getDatabase());

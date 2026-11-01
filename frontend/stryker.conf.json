@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Mutation testing: each surviving mutant on a changed path is a finding (max 7/file). Scoped to .ts logic (composables, stores, utils, services); .vue SFCs are excluded because mutating template-coupled script blocks is flaky. Real runs scope --mutate to changed files.",
+  "testRunner": "vitest",
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/**/*.ts",
+    "!src/**/*.{test,spec}.ts",
+    "!src/**/*.d.ts",
+    "!src/__tests__/**",
+    "!src/__mocks__/**",
+    "!src/main.ts",
+    "!src/types/**"
+  ],
+  "reporters": ["json", "clear-text"],
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "timeoutMS": 60000,
+  "concurrency": 2,
+  "tempDirName": ".stryker-tmp"
+}

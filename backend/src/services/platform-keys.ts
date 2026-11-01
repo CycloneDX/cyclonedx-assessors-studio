@@ -22,7 +22,6 @@
 
 import crypto from 'node:crypto';
 import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
 import { getDatabase } from '../db/connection.js';
 import type { Database } from '../db/types.js';
 import { encryptionService } from '../utils/encryption.js';
@@ -211,11 +210,3 @@ export async function rotateKey(opts: {
   });
 }
 
-/**
- * Test and maintenance hook: drop all platform keys. Intended for
- * fixture resets. Never call from production code paths.
- */
-export async function resetForTests(): Promise<void> {
-  const db = getDatabase();
-  await sql`DELETE FROM platform_signing_key`.execute(db);
-}

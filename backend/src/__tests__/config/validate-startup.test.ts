@@ -170,6 +170,29 @@ describe('validateStartupConfig', () => {
       }
     });
 
+    it('puts DATABASE_PASSWORD_FILE into DATABASE_URL (W5 compose secrets)', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dbpw-'));
+      try {
+        const pwPath = path.join(dir, 'postgres_password');
+        fs.writeFileSync(pwPath, 'p@ss/w:rd+1\n');
+        process.env.DATABASE_URL = 'postgresql://assessors_studio@db:5432/assessors_studio';
+        process.env.DATABASE_PASSWORD_FILE = pwPath;
+        const url = new URL(getConfig().DATABASE_URL);
+        expect(decodeURIComponent(url.password)).toBe('p@ss/w:rd+1');
+        expect(url.username).toBe('assessors_studio');
+        expect(url.host).toBe('db:5432');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('leaves DATABASE_URL alone when no DATABASE_PASSWORD is set', () => {
+      delete process.env.DATABASE_PASSWORD;
+      delete process.env.DATABASE_PASSWORD_FILE;
+      process.env.DATABASE_URL = 'postgresql://u:keep@db:5432/x';
+      expect(getConfig().DATABASE_URL).toBe('postgresql://u:keep@db:5432/x');
+    });
+
     it('throws when S3_*_FILE points at an unreadable path', () => {
       // getConfig() re-runs the file resolver on every cold start,
       // so pointing at a nonexistent path and clearing the cache is

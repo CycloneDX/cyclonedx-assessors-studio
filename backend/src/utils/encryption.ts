@@ -78,7 +78,7 @@ let activeKeyVersion: number = 0;
 /**
  * Load key versions from the database into memory.
  */
-export async function loadKeyVersions(db: Kysely<Database>): Promise<void> {
+async function loadKeyVersions(db: Kysely<Database>): Promise<void> {
   try {
     const rows = await db
       .selectFrom('encryption_key_version')
@@ -111,7 +111,7 @@ export async function loadKeyVersions(db: Kysely<Database>): Promise<void> {
  * Ensure at least one key version exists. Creates version 1 if the table
  * is empty. Called during application startup.
  */
-export async function ensureKeyVersion(db: Kysely<Database>): Promise<void> {
+async function ensureKeyVersion(db: Kysely<Database>): Promise<void> {
   await loadKeyVersions(db);
 
   if (keyVersions.size === 0 && getMasterKey() !== null) {
@@ -172,7 +172,17 @@ export async function rotateKeyVersion(db: Kysely<Database>): Promise<number> {
 
 function getMasterKey(): Buffer | null {
   const hex = process.env.MASTER_ENCRYPTION_KEY;
-  if (!hex || hex.length < 64) return null;
+  if (!hex) return null;
+  // Exactly 64 hex characters. Buffer.from(x, 'hex') silently stops at the
+  // first non-hex character, so a passphrase or base64 key used to become
+  // a short or empty key that anyone with the database could undo
+  // (security review X5). Fail closed instead.
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(
+      'MASTER_ENCRYPTION_KEY must be exactly 64 hexadecimal characters (256 bits). '
+      + 'Generate one with "openssl rand -hex 32".',
+    );
+  }
   return Buffer.from(hex, 'hex');
 }
 
@@ -497,12 +507,19 @@ export const encryptionService: EncryptionService = new EncryptionServiceImpl();
  * instead of silently downgrading protection.
  */
 export async function initializeEncryption(db: Kysely<Database>): Promise<void> {
-  const requireEncryption = process.env.REQUIRE_ENCRYPTION === 'true';
+  // Production requires a master key unless the operator explicitly opts
+  // out with REQUIRE_ENCRYPTION=false; passthrough stored webhook secrets,
+  // chat tokens and the platform signing key in plaintext (security
+  // review X6).
+  const isProductionEnv = process.env.NODE_ENV === 'production';
+  const requireEncryption = process.env.REQUIRE_ENCRYPTION === 'true'
+    || (isProductionEnv && process.env.REQUIRE_ENCRYPTION !== 'false');
   const mk = getMasterKey();
 
   if (requireEncryption && !mk) {
     throw new Error(
-      'REQUIRE_ENCRYPTION is true but MASTER_ENCRYPTION_KEY is not set or is too short. '
+      'Encryption at rest is required (REQUIRE_ENCRYPTION=true, or NODE_ENV=production) but MASTER_ENCRYPTION_KEY is not set. '
+      + 'To run without it deliberately, set REQUIRE_ENCRYPTION=false. '
       + 'Generate a 256 bit key with "openssl rand -hex 32" and set it as '
       + 'MASTER_ENCRYPTION_KEY (64 hex characters) before restarting.',
     );
@@ -602,6 +619,7 @@ export { parseEnvelope, FORMAT_VERSION, MIN_ENVELOPE_LENGTH, keyVersions, active
 
 /**
  * Reset internal state (for testing only).
+ * @internal Test seam; not part of the module API.
  */
 export function _resetForTesting(): void {
   keyVersions.clear();
@@ -610,6 +628,7 @@ export function _resetForTesting(): void {
 
 /**
  * Manually set a key version in the cache (for testing only).
+ * @internal Test seam; not part of the module API.
  */
 export function _setKeyVersionForTesting(version: number, salt: Buffer, isActive: boolean): void {
   keyVersions.set(version, { version, salt, isActive });

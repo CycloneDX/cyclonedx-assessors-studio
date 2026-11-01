@@ -418,4 +418,32 @@ describe('SideBar.vue', () => {
       expect(labels.length).toBeGreaterThan(0)
     })
   })
+
+  describe('page links follow list permissions', () => {
+    it('hides pages whose list the role cannot read (standards manager)', () => {
+      const wrapper = mountSideBar({
+        beforeMount: () => {
+          useAuthStore().permissions = ['standards.view', 'standards.create', 'standards.edit']
+        },
+      })
+      const labels = wrapper.findAll('.nav-label').map((n) => n.text())
+      expect(labels).toContain('Dashboard')
+      expect(labels).toContain('Standards')
+      for (const hidden of ['Entities', 'Projects', 'Assessments', 'Evidence', 'Claims', 'Attestations']) {
+        expect(labels).not.toContain(hidden)
+      }
+    })
+
+    it('shows them when the role holds the permissions', () => {
+      const wrapper = mountSideBar({
+        beforeMount: () => {
+          useAuthStore().permissions = ['entities.view', 'projects.view', 'assessments.view', 'evidence.view', 'claims.view', 'attestations.view']
+        },
+      })
+      const labels = wrapper.findAll('.nav-label').map((n) => n.text())
+      for (const shown of ['Entities', 'Projects', 'Assessments', 'Evidence', 'Claims', 'Attestations']) {
+        expect(labels).toContain(shown)
+      }
+    })
+  })
 })

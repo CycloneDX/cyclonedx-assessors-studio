@@ -160,7 +160,6 @@
       </div>
 
       <el-upload
-        ref="uploadRef"
         :auto-upload="false"
         :limit="1"
         accept=".json,.cdx.json"
@@ -213,7 +212,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading, Upload, FolderOpened } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 import type { Project, Standard, Tag } from '@/types'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import StateBadge from '@/components/shared/StateBadge.vue'
@@ -291,7 +290,7 @@ const fetchProjects = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await axios.get('/api/v1/projects')
+    const response = await client.get('/projects', { params: { limit: 100 } })
     projects.value = response.data.data || []
   } catch (err: unknown) {
     const e = err as { response?: { data?: { error?: string } } }
@@ -303,7 +302,7 @@ const fetchProjects = async () => {
 
 const fetchStandards = async () => {
   try {
-    const response = await axios.get('/api/v1/standards')
+    const response = await client.get('/standards')
     availableStandards.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to load standards:', err)
@@ -339,7 +338,7 @@ const saveProject = async () => {
   saving.value = true
   try {
     if (isEditMode.value) {
-      await axios.put(`/api/v1/projects/${dialogForm.value.id}`, {
+      await client.put(`/projects/${dialogForm.value.id}`, {
         name: dialogForm.value.name,
         description: dialogForm.value.description,
         standardIds: dialogForm.value.standardIds,
@@ -347,7 +346,7 @@ const saveProject = async () => {
       })
       ElMessage.success('Project updated successfully')
     } else {
-      await axios.post('/api/v1/projects', {
+      await client.post('/projects', {
         name: dialogForm.value.name,
         description: dialogForm.value.description,
         standardIds: dialogForm.value.standardIds,
@@ -373,7 +372,7 @@ const deleteProject = (row: Project) => {
   })
     .then(async () => {
       try {
-        await axios.delete(`/api/v1/projects/${row.id}`)
+        await client.delete(`/projects/${row.id}`)
         ElMessage.success('Project deleted successfully')
         await fetchProjects()
       } catch (err: unknown) {
@@ -407,7 +406,6 @@ const importing = ref(false)
 const importData = ref<any | null>(null)
 const importPreview = ref<any | null>(null)
 const importResult = ref<any | null>(null)
-const uploadRef = ref()
 
 const handleImportFileChange = (file: any) => {
   const reader = new FileReader()
@@ -439,7 +437,7 @@ const executeImport = async () => {
   if (!importData.value) return
   importing.value = true
   try {
-    const { data } = await axios.post('/api/v1/import/attestation', importData.value)
+    const { data } = await client.post('/import/attestation', importData.value)
     importResult.value = data
     await fetchProjects()
     ElMessage.success('Attestation imported successfully')

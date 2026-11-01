@@ -1,12 +1,12 @@
 import { Kysely } from 'kysely';
-import { KyselyPGlite } from 'kysely-pglite';
+import { pgliteDialect } from '../../db/pglite-dialect.js';
 import { hashPassword } from '../../utils/crypto.js';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { Database } from '../../db/types.js';
-import { SQL as MIGRATION_SQL } from '../../db/migrate.js';
+import { SQL as MIGRATION_SQL, installSoftDeleteViews } from '../../db/migrate.js';
 import { seedDefaultRolesAndPermissions } from '../../db/seed.js';
 import { AuditLogAppendOnlyPlugin } from '../../db/audit-log-plugin.js';
 import { logger } from '../../utils/logger.js';
@@ -44,10 +44,8 @@ export async function setupTestDb() {
     dataDir: testDbDir,
   });
 
-  const pgliteWrapper = new KyselyPGlite(pglite);
-
   testDb = new Kysely<Database>({
-    dialect: pgliteWrapper.dialect,
+    dialect: pgliteDialect(pglite),
     plugins: [new AuditLogAppendOnlyPlugin()],
   });
 
@@ -86,6 +84,14 @@ async function runMigrationsWithDb(db: Kysely<Database>): Promise<void> {
         if (msg.includes('cannot cast') || msg.includes('function decode(bytea')) {
           continue;
         }
+        // Mirror migrate.ts's soft-delete idempotency tolerance: additive DDL
+        // that targets a view (post rename-to-*_raw) on a re-run.
+        if (
+          msg.includes('cannot create index on relation') ||
+          msg.includes('ADD COLUMN cannot be performed on relation')
+        ) {
+          continue;
+        }
         const stmtPreview = statement.trim().slice(0, 400);
         throw new Error(
           `Test migration failed on statement: ${stmtPreview}\n\nOriginal error: ${msg}`,
@@ -93,6 +99,12 @@ async function runMigrationsWithDb(db: Kysely<Database>): Promise<void> {
       }
     }
   }
+
+  // Install the soft-delete view layer so tests exercise the same schema as
+  // production (deleted_at columns, *_raw tables, and filtered views). Without
+  // this, selectFrom('assessment') would hit a plain base table and soft-delete
+  // writes would fail on the missing deleted_at column.
+  await installSoftDeleteViews(db);
 
   logger.info('Database migrations completed');
 }

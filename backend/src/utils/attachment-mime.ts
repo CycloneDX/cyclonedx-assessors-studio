@@ -243,10 +243,3 @@ export function verifyAttachmentMimeType(
     mismatched: resolved !== claimed,
   };
 }
-
-/**
- * Exposed for tests that need to assert allowlist contents without
- * duplicating them. Do not mutate.
- */
-export const ALLOWED_ATTACHMENT_MIME_TYPES: ReadonlySet<string> = DEFAULT_ALLOWED_MIME_TYPES;
-export const BLOCKED_ATTACHMENT_MIME_TYPES: ReadonlySet<string> = BLOCKED_MIME_TYPES;

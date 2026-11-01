@@ -264,7 +264,7 @@
       width="600px"
       @close="resetEditForm"
     >
-      <el-form ref="editFormRef" :model="editForm" label-width="120px">
+      <el-form :model="editForm" label-width="120px">
         <el-form-item label="Name" prop="name" required>
           <el-input v-model="editForm.name" placeholder="Standard name" />
         </el-form-item>
@@ -399,12 +399,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, nextTick } from 'vue'
+import { ref, onMounted, computed, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowRight, Loading, Edit, Delete, Plus, ArrowDown } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import axios from 'axios'
+import client from '@/api/client'
 import StateBadge from '@/components/shared/StateBadge.vue'
 import IconButton from '@/components/shared/IconButton.vue'
 import RequirementTree, { type RequirementNode } from '@/components/shared/RequirementTree.vue'
@@ -432,7 +432,6 @@ const exporting = ref(false)
 
 // Edit dialog state
 const editDialogVisible = ref(false)
-const editFormRef = ref()
 const editForm = ref({
   name: '',
   identifier: '',
@@ -559,7 +558,7 @@ const fetchProjects = async () => {
   if (!standard.value?.id) return
   projectsLoading.value = true
   try {
-    const { data } = await axios.get(`/api/v1/projects?standardId=${standard.value.id}`)
+    const { data } = await client.get(`/projects?standardId=${standard.value.id}`)
     projects.value = data.data || []
   } catch (err: unknown) {
     console.error('Failed to fetch projects:', err)
@@ -590,7 +589,7 @@ const fetchStandard = async (options: { silent?: boolean } = {}) => {
   const scrollLeft = scrollContainer?.scrollLeft ?? 0
   const scrollTop = scrollContainer?.scrollTop ?? 0
   try {
-    const { data } = await axios.get(`/api/v1/standards/${route.params.id}`)
+    const { data } = await client.get(`/standards/${encodeURIComponent(String(route.params.id))}`)
     standard.value = data.standard
     requirements.value = data.requirements || []
     levels.value = data.levels || []
@@ -650,7 +649,7 @@ const handleSaveEdit = async () => {
       ElMessage.error('Standard ID is missing')
       return
     }
-    await axios.put(`/api/v1/standards/${standard.value.id}`, editForm.value)
+    await client.put(`/standards/${standard.value.id}`, editForm.value)
     ElMessage.success('Standard updated successfully')
     editDialogVisible.value = false
     await fetchStandard({ silent: true })
@@ -700,13 +699,13 @@ const handleSaveRequirement = async () => {
       return
     }
     if (editingRequirement.value) {
-      await axios.put(
-        `/api/v1/standards/${standard.value.id}/requirements/${editingRequirement.value.id}`,
+      await client.put(
+        `/standards/${standard.value.id}/requirements/${editingRequirement.value.id}`,
         requirementForm.value
       )
       ElMessage.success('Requirement updated successfully')
     } else {
-      await axios.post(`/api/v1/standards/${standard.value.id}/requirements`, requirementForm.value)
+      await client.post(`/standards/${standard.value.id}/requirements`, requirementForm.value)
       ElMessage.success('Requirement added successfully')
     }
     requirementDialogVisible.value = false
@@ -723,8 +722,8 @@ const handleSaveInline = async (row: RequirementNode, field: string, value: stri
       ElMessage.error('Standard ID is missing')
       return
     }
-    await axios.put(
-      `/api/v1/standards/${standard.value.id}/requirements/${row.id}`,
+    await client.put(
+      `/standards/${standard.value.id}/requirements/${row.id}`,
       { [field]: value }
     )
     await fetchStandard({ silent: true })
@@ -740,8 +739,8 @@ const handleReparent = async (requirementId: string, newParentId: string | null)
       ElMessage.error('Standard ID is missing')
       return
     }
-    await axios.put(
-      `/api/v1/standards/${standard.value.id}/requirements/${requirementId}/reparent`,
+    await client.put(
+      `/standards/${standard.value.id}/requirements/${requirementId}/reparent`,
       { parent_id: newParentId }
     )
     await fetchStandard({ silent: true })
@@ -767,8 +766,17 @@ const handleDeleteRequirement = async (requirement: RequirementNode) => {
     }
     const descendantCount = countDescendants(requirement)
     const hasChildren = descendantCount > 0
+    // Built as VNodes, not an HTML string: the identifier comes from user
+    // input and imported standards, and was rendered as raw HTML
+    // (security review W2).
     const message = hasChildren
-      ? `<p><strong>${requirement.identifier}</strong> has ${descendantCount} child requirement${descendantCount === 1 ? '' : 's'}. Deleting will also remove all descendants. This cannot be undone.</p><p>Continue?</p>`
+      ? h('div', [
+          h('p', [
+            h('strong', String(requirement.identifier)),
+            ` has ${descendantCount} child requirement${descendantCount === 1 ? '' : 's'}. Deleting will also remove all descendants. This cannot be undone.`,
+          ]),
+          h('p', 'Continue?'),
+        ])
       : 'This will delete the requirement. Continue?'
     await ElMessageBox.confirm(
       message,
@@ -777,12 +785,11 @@ const handleDeleteRequirement = async (requirement: RequirementNode) => {
         confirmButtonText: hasChildren ? `Delete ${descendantCount + 1} requirements` : 'OK',
         cancelButtonText: 'Cancel',
         type: 'warning',
-        dangerouslyUseHTMLString: hasChildren,
         confirmButtonClass: hasChildren ? 'el-button--danger' : undefined,
       }
     )
-    await axios.delete(
-      `/api/v1/standards/${standard.value.id}/requirements/${requirement.id}`
+    await client.delete(
+      `/standards/${standard.value.id}/requirements/${requirement.id}`
     )
     ElMessage.success('Requirement deleted successfully')
     await fetchStandard({ silent: true })
@@ -814,7 +821,7 @@ const handleSaveLevel = async () => {
       ElMessage.error('Standard ID is missing')
       return
     }
-    await axios.post(`/api/v1/standards/${standard.value.id}/levels`, levelForm.value)
+    await client.post(`/standards/${standard.value.id}/levels`, levelForm.value)
     ElMessage.success('Level added')
     levelDialogVisible.value = false
     await fetchStandard({ silent: true })
@@ -835,7 +842,7 @@ const handleDeleteLevel = async (level: Record<string, unknown>) => {
       'Warning',
       { confirmButtonText: 'Delete', cancelButtonText: 'Cancel', type: 'warning' }
     )
-    await axios.delete(`/api/v1/standards/${standard.value.id}/levels/${level.id as string}`)
+    await client.delete(`/standards/${standard.value.id}/levels/${level.id as string}`)
     ElMessage.success('Level deleted')
     await fetchStandard({ silent: true })
   } catch (err: unknown) {
@@ -858,8 +865,8 @@ const saveLevelField = async (row: Record<string, unknown>) => {
       ElMessage.error('Standard ID is missing')
       return
     }
-    await axios.put(
-      `/api/v1/standards/${standard.value.id}/levels/${row.id as string}`,
+    await client.put(
+      `/standards/${standard.value.id}/levels/${row.id as string}`,
       { [editingLevelField.value.field]: editingLevelValue.value }
     )
     editingLevelField.value = null
@@ -892,8 +899,8 @@ const handleSaveLevelRequirements = async () => {
       ElMessage.error('Standard ID is missing')
       return
     }
-    await axios.put(
-      `/api/v1/standards/${standard.value.id}/levels/${editingLevel.value.id as string}/requirements`,
+    await client.put(
+      `/standards/${standard.value.id}/levels/${editingLevel.value.id as string}/requirements`,
       { requirementIds: selectedLevelReqIds.value }
     )
     ElMessage.success('Level requirements updated')
@@ -921,7 +928,7 @@ const handleSubmitForApproval = async () => {
         type: 'warning',
       }
     )
-    await axios.post(`/api/v1/standards/${standard.value.id}/submit`)
+    await client.post(`/standards/${standard.value.id}/submit`)
     ElMessage.success('Standard submitted for approval')
     await fetchStandard({ silent: true })
   } catch (err: unknown) {
@@ -947,7 +954,7 @@ const handleApprove = async () => {
         type: 'success',
       }
     )
-    await axios.post(`/api/v1/standards/${standard.value.id}/approve`)
+    await client.post(`/standards/${standard.value.id}/approve`)
     ElMessage.success('Standard approved')
     await fetchStandard({ silent: true })
   } catch (err: unknown) {
@@ -973,7 +980,7 @@ const handleReject = async () => {
         inputType: 'textarea',
       }
     )
-    await axios.post(`/api/v1/standards/${standard.value.id}/reject`, { reason })
+    await client.post(`/standards/${standard.value.id}/reject`, { reason })
     ElMessage.success('Standard rejected')
     await fetchStandard({ silent: true })
   } catch (err: unknown) {
@@ -990,7 +997,7 @@ const handleDuplicate = async () => {
       ElMessage.error('Standard ID is missing')
       return
     }
-    const { data } = await axios.post(`/api/v1/standards/${standard.value.id}/duplicate`)
+    const { data } = await client.post(`/standards/${standard.value.id}/duplicate`)
     ElMessage.success('Standard duplicated')
     await router.push(`/standards/${(data as Record<string, unknown>).id as string}`)
   } catch (err: unknown) {
@@ -1006,7 +1013,7 @@ const handleExport = async () => {
       ElMessage.error('Standard ID is missing')
       return
     }
-    const response = await axios.get(`/api/v1/standards/${standard.value.id}/export`, {
+    const response = await client.get(`/standards/${standard.value.id}/export`, {
       responseType: 'blob',
     })
     const blob = new Blob([response.data], { type: 'application/vnd.cyclonedx+json' })
@@ -1048,7 +1055,7 @@ const handleRetire = async () => {
         type: 'warning',
       }
     )
-    await axios.post(`/api/v1/standards/${standard.value.id}/retire`)
+    await client.post(`/standards/${standard.value.id}/retire`)
     ElMessage.success('Standard retired')
     await fetchStandard({ silent: true })
   } catch (err: unknown) {

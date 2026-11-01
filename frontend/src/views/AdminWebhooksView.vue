@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import axios from 'axios'
+import client from '@/api/client'
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 
@@ -166,7 +166,6 @@ import {
   Delete,
   View as ViewIcon,
   Promotion,
-  CircleCheck,
   ArrowLeft,
 } from '@element-plus/icons-vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
@@ -206,7 +205,7 @@ const fetchWebhooks = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await axios.get('/api/v1/webhooks')
+    const response = await client.get('/webhooks')
     webhooks.value = response.data.data || []
   } catch (err: unknown) {
     const e = err as { response?: { data?: { error?: string } }; message?: string }
@@ -221,7 +220,7 @@ const fetchDeliveries = async () => {
   deliveriesLoading.value = true
   try {
     const offset = (deliveryPage.value - 1) * deliveryPageSize
-    const response = await axios.get(`/api/v1/webhooks/${(selectedWebhook.value as Record<string, unknown>).id}/deliveries`, {
+    const response = await client.get(`/webhooks/${(selectedWebhook.value as Record<string, unknown>).id}/deliveries`, {
       params: { limit: deliveryPageSize, offset },
     })
     deliveries.value = response.data.data || []
@@ -276,14 +275,14 @@ const handleSave = async (data: { name: string; url: string; eventTypes: string[
       if (data.regenerateSecret) {
         payload.regenerateSecret = true
       }
-      const response = await axios.put(`/api/v1/webhooks/${editingId.value}`, payload)
+      const response = await client.put(`/webhooks/${editingId.value}`, payload)
       if (response.data.secret) {
         createdSecret.value = response.data.secret
         showSecretDialog.value = true
       }
       ElMessage.success(t('webhooks.webhookUpdated'))
     } else {
-      const response = await axios.post('/api/v1/webhooks', {
+      const response = await client.post('/webhooks', {
         name: data.name,
         url: data.url,
         eventTypes: data.eventTypes,
@@ -321,7 +320,7 @@ const handleDelete = async (row: Record<string, unknown>) => {
   }
 
   try {
-    await axios.delete(`/api/v1/webhooks/${row.id as string}`)
+    await client.delete(`/webhooks/${row.id as string}`)
     ElMessage.success(t('webhooks.webhookDeleted'))
     fetchWebhooks()
   } catch (err: unknown) {
@@ -330,20 +329,9 @@ const handleDelete = async (row: Record<string, unknown>) => {
   }
 }
 
-const handleEnable = async (row: Record<string, unknown>) => {
-  try {
-    await axios.post(`/api/v1/webhooks/${row.id as string}/enable`)
-    ElMessage.success(t('webhooks.webhookEnabled'))
-    fetchWebhooks()
-  } catch (err: unknown) {
-    const e = err as { response?: { data?: { error?: string } } }
-    ElMessage.error(e.response?.data?.error || 'Failed to enable webhook')
-  }
-}
-
 const handleTest = async (row: Record<string, unknown>) => {
   try {
-    const response = await axios.post(`/api/v1/webhooks/${row.id as string}/test`)
+    const response = await client.post(`/webhooks/${row.id as string}/test`)
     ElMessage.success(t('webhooks.testSent', { eventId: response.data.eventId || '' }))
   } catch (err: unknown) {
     const e = err as { response?: { data?: { error?: string } } }

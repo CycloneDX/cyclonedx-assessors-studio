@@ -18,7 +18,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { version } from '../../../package.json'
-import axios from 'axios'
+import client from '@/api/client'
 
 const authStore = useAuthStore()
 
@@ -27,7 +27,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const checkHealth = async () => {
   try {
-    const { data } = await axios.get('/api/health', { timeout: 5000 })
+    const { data } = await client.get('/api/health', { baseURL: '/', timeout: 5000 })
     backendStatus.value = data.status === 'healthy' ? 'connected' : 'disconnected'
   } catch {
     backendStatus.value = 'disconnected'

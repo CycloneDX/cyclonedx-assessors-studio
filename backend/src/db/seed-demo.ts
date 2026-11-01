@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { randomBytes } from 'node:crypto';
 import { getDatabase } from './connection.js';
 import { hashPassword } from '../utils/crypto.js';
 import { logger } from '../utils/logger.js';
@@ -54,7 +55,7 @@ async function seedBasicEntities(db: Kysely<Database>, data: DemoData): Promise<
 }
 
 // Helper: Seed users with password hashing
-async function seedUsers(db: Kysely<Database>, data: DemoData, adminRole: { id: string } | undefined, adminUser: { id: string } | undefined): Promise<void> {
+async function seedUsers(db: Kysely<Database>, data: DemoData, adminRole: { id: string } | undefined, adminUser: { id: string } | undefined, userPassword: string | undefined): Promise<void> {
   const roleMap = new Map<string, string>();
   const roles = await db.selectFrom('role').select(['id', 'key']).execute();
   for (const role of roles) {
@@ -64,7 +65,11 @@ async function seedUsers(db: Kysely<Database>, data: DemoData, adminRole: { id: 
   for (const user of data.users) {
     // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
     const userData = user as any;
-    const passwordHash = await hashPassword(userData.password as string);
+    // The password in demo-data.json is published in the repo, so it is
+    // never used. Without an operator-supplied password the account gets
+    // a hash of random bytes nobody knows: the demo records load, but no
+    // one can sign in as a demo user (security review A1).
+    const passwordHash = await hashPassword(userPassword ?? randomBytes(32).toString('base64url'));
     await db
       .insertInto('app_user')
       .values({
@@ -263,6 +268,8 @@ async function seedAssessments(db: Kysely<Database>, data: DemoData, resolveId: 
       state: assessmentData.state as string,
       start_date: assessmentData.start_date || undefined,
       due_date: assessmentData.due_date || undefined,
+      assessment_type: (assessmentData.assessment_type as string) || 'standards',
+      task_label: assessmentData.task_label || undefined,
     }).execute();
   }
   logger.info(`Seeded ${data.assessments.length} assessments`);
@@ -431,7 +438,7 @@ async function seedAssessmentRequirements(db: Kysely<Database>, _data: DemoData,
 }
 
 // Helper: Seed claims and related data
-async function seedClaims(db: Kysely<Database>, data: DemoData, resolveId: (val: string) => string | null): Promise<void> {
+async function seedClaims(db: Kysely<Database>, data: DemoData): Promise<void> {
   for (const claim of data.claims) {
     // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
     const claimData = claim as any;
@@ -560,6 +567,10 @@ async function seedSSDF(db: Kysely<Database>, data: DemoData, ssdfStandardId: st
       requirement_id: requirementId,
       result: arData.result || undefined,
       rationale: arData.rationale || undefined,
+      conformance_score: arData.conformance_score ?? undefined,
+      conformance_rationale: arData.conformance_rationale || undefined,
+      confidence_score: arData.confidence_score ?? undefined,
+      confidence_rationale: arData.confidence_rationale || undefined,
     }).execute();
 
     if (arData.evidence_ids && (arData.evidence_ids as unknown[]).length > 0) {
@@ -721,7 +732,7 @@ async function seedSSDF(db: Kysely<Database>, data: DemoData, ssdfStandardId: st
   logger.info(`Seeded ${ssdf.attestation_requirement_mitigations.length} SSDF attestation requirement mitigations`);
 }
 
-// Helper: Seed notifications, audit logs, and dashboards
+// Helper: Seed notifications and audit logs
 async function seedFinalEntities(db: Kysely<Database>, data: DemoData, resolveId: (val: string) => string | null): Promise<void> {
   for (const notif of data.notifications) {
     // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
@@ -775,25 +786,6 @@ async function seedFinalEntities(db: Kysely<Database>, data: DemoData, resolveId
     await db.insertInto('audit_log').values(row as any).execute();
   }
   logger.info(`Seeded ${data.audit_logs.length} audit log entries`);
-
-  for (const dash of data.dashboards) {
-    // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
-    const dashData = dash as any;
-    const resolved = resolveId(dashData.owner_id as string);
-    if (!resolved) {
-      throw new Error(`Failed to resolve owner_id: ${dashData.owner_id}`);
-    }
-    await db.insertInto('dashboard').values({
-      id: dashData.id as string,
-      name: dashData.name as string,
-      description: dashData.description as string,
-      owner_id: resolved,
-      is_default: dashData.is_default as boolean,
-      is_shared: dashData.is_shared as boolean,
-      layout: JSON.stringify(dashData.layout),
-    }).execute();
-  }
-  logger.info(`Seeded ${data.dashboards.length} dashboards`);
 }
 
 // DemoData interface: loaded from JSON, properties are loosely typed
@@ -825,15 +817,75 @@ interface DemoData {
   claim_evidence: Record<string, unknown>[];
   claim_counter_evidence: Record<string, unknown>[];
   claim_mitigation_strategies: Record<string, unknown>[];
+  mitigations?: Record<string, unknown>[];
+  mitigation_claim?: Record<string, unknown>[];
+  mitigation_evidence?: Record<string, unknown>[];
+  assessment_evidence?: Record<string, unknown>[];
+  scheduled_assessments?: Record<string, unknown>[];
   notifications: Record<string, unknown>[];
   audit_logs: Record<string, unknown>[];
-  dashboards: Record<string, unknown>[];
   ssdf_assessment_data?: {
     assessment_requirements: Record<string, unknown>[];
     attestation: Record<string, unknown>;
     attestation_requirements: Record<string, unknown>[];
     attestation_requirement_mitigations: Record<string, unknown>[];
   };
+}
+
+/**
+ * Seed the standalone mitigation register, the scheduler, and the
+ * assessment/mitigation link tables. These tables have no bespoke seeding
+ * elsewhere; the rows come straight from the demo-data arrays. All sections are
+ * optional so older demo-data.json files (without them) still seed cleanly.
+ * Runs after projects, assessments, evidence, and claims exist.
+ */
+async function seedMitigationsAndScheduler(
+  db: Kysely<Database>,
+  data: DemoData,
+  resolveId: (val: string) => string | null,
+): Promise<void> {
+  const adminId = resolveId('__ADMIN_USER__') || undefined;
+
+  for (const m of data.mitigations ?? []) {
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
+    await db.insertInto('mitigation').values({ ...(m as any), created_by: adminId, created_at: new Date(), updated_at: new Date() } as any).execute();
+  }
+  if (data.mitigations?.length) logger.info(`Seeded ${data.mitigations.length} mitigations`);
+
+  for (const ae of data.assessment_evidence ?? []) {
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
+    await db.insertInto('assessment_evidence').values({ ...(ae as any), created_at: new Date() } as any).execute();
+  }
+  for (const mc of data.mitigation_claim ?? []) {
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
+    await db.insertInto('mitigation_claim').values({ ...(mc as any), created_at: new Date() } as any).execute();
+  }
+  for (const me of data.mitigation_evidence ?? []) {
+    // biome-ignore lint/suspicious/noExplicitAny: Kysely seed data requires dynamic types
+    await db.insertInto('mitigation_evidence').values({ ...(me as any), created_at: new Date() } as any).execute();
+  }
+
+  for (const s of data.scheduled_assessments ?? []) {
+    const sd = s as Record<string, unknown>;
+    await db.insertInto('scheduled_assessment').values({
+      id: sd.id as string,
+      title: sd.title as string,
+      description: (sd.description as string) || undefined,
+      project_id: (sd.project_id as string) || undefined,
+      assessor_id: sd.assessor_id ? (resolveId(sd.assessor_id as string) || undefined) : undefined,
+      standard_id: sd.standard_id ? (resolveId(sd.standard_id as string) || undefined) : undefined,
+      assessment_id: (sd.assessment_id as string) || undefined,
+      scheduled_date: sd.scheduled_date as string,
+      due_date: (sd.due_date as string) || undefined,
+      recurrence: (sd.recurrence as string) || 'none',
+      status: (sd.status as string) || 'scheduled',
+      created_by: adminId,
+      created_at: new Date(),
+      updated_at: new Date(),
+      // biome-ignore lint/suspicious/noExplicitAny: dynamic seed row
+    } as any).execute();
+  }
+  if (data.scheduled_assessments?.length) logger.info(`Seeded ${data.scheduled_assessments.length} scheduled assessments`);
 }
 
 /**
@@ -846,7 +898,12 @@ interface DemoData {
  *
  * Returns true if demo data was seeded, false if skipped (data already present).
  */
-export async function seedDemoData(): Promise<boolean> {
+export interface SeedDemoOptions {
+  /** Sign-in password for every demo user. Omit to make them unable to sign in. */
+  userPassword?: string;
+}
+
+export async function seedDemoData(options: SeedDemoOptions = {}): Promise<boolean> {
   const db = getDatabase();
 
   // Guard: skip if demo data already exists
@@ -913,7 +970,7 @@ export async function seedDemoData(): Promise<boolean> {
 
   // Seed in FK dependency order
   await seedBasicEntities(db, data);
-  await seedUsers(db, data, adminRole, adminUser);
+  await seedUsers(db, data, adminRole, adminUser, options.userPassword);
   await seedEntitiesAndRelationships(db, data, firstStandardId, secondStandardId, ssdfStandardId);
   await seedCompliancePolicies(db, data, firstStandardId, secondStandardId);
   await seedSignatoriesAndProjects(db, data, firstStandardId, secondStandardId);
@@ -924,13 +981,15 @@ export async function seedDemoData(): Promise<boolean> {
   await seedAffirmations(db, data);
   await seedEvidence(db, data, resolveId);
   await seedAssessmentRequirements(db, data, firstStandardId, adminUserId);
-  await seedClaims(db, data, resolveId);
+  await seedClaims(db, data);
 
   const { internalAssessorId, externalAssessorId } = await seedAssessorsAndReferences(db);
   await seedAttestations(db, firstStandardId, ssdfStandardId, internalAssessorId);
   await seedSSDF(db, data, ssdfStandardId, externalAssessorId, adminUserId);
 
   await seedFinalEntities(db, data, resolveId);
+
+  await seedMitigationsAndScheduler(db, data, resolveId);
 
   // Seal the SSDF demo affirmation end-to-end. Uses a freshly
   // generated RSA key for the digital signatory and the platform
