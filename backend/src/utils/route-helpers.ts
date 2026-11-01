@@ -83,3 +83,17 @@ export function handleValidationError(res: Response, error: unknown): boolean {
 export function validateBody<T>(schema: z.ZodSchema<T>, body: unknown): T {
   return schema.parse(body);
 }
+
+/**
+ * Validates req.body against a schema. On failure responds 400 with the
+ * issues and returns null, so a handler can `if (!body) return;`. Use
+ * wherever a handler reads req.body (security review I9).
+ */
+export function parseBody<T>(schema: z.ZodSchema<T>, body: unknown, res: Response): T | null {
+  const result = schema.safeParse(body ?? {});
+  if (!result.success) {
+    res.status(400).json({ error: 'Invalid input', details: result.error.issues });
+    return null;
+  }
+  return result.data;
+}

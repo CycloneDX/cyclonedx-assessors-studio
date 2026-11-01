@@ -23,6 +23,8 @@
       <!-- Tab Content -->
       <OverviewTab v-if="activeTab === 'overview'" />
       <ProgressTab v-else-if="activeTab === 'progress'" />
+      <ProjectHealthTab v-else-if="activeTab === 'projecthealth'" />
+      <ActivityTab v-else-if="activeTab === 'activity'" />
     </div>
   </div>
 </template>
@@ -30,11 +32,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Odometer, TrendCharts } from '@element-plus/icons-vue'
+import { Odometer, TrendCharts, Histogram, List } from '@element-plus/icons-vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import GettingStartedDialog from '@/components/shared/GettingStartedDialog.vue'
 import OverviewTab from '@/components/dashboard/OverviewTab.vue'
 import ProgressTab from '@/components/dashboard/ProgressTab.vue'
+import ProjectHealthTab from '@/components/dashboard/ProjectHealthTab.vue'
+import ActivityTab from '@/components/dashboard/ActivityTab.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
@@ -44,8 +48,10 @@ const showGettingStarted = ref(!authStore.user?.hasCompletedOnboarding)
 const activeTab = ref('overview')
 
 const tabs = computed(() => [
-  { id: 'overview', label: t('dashboard.overviewTab', 'Overview'), icon: Odometer },
-  { id: 'progress', label: t('dashboard.progressTab', 'Progress'), icon: TrendCharts },
+  { id: 'overview',     label: t('dashboard.overviewTab', 'Overview'),        icon: Odometer },
+  { id: 'progress',     label: t('dashboard.progressTab', 'Progress'),         icon: TrendCharts },
+  { id: 'projecthealth',label: t('dashboard.projectHealthTab', 'Project health'), icon: Histogram },
+  { id: 'activity',     label: t('dashboard.activityTab', 'Activity'),          icon: List },
 ])
 </script>
 

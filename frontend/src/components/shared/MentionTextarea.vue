@@ -13,7 +13,6 @@
     <Teleport to="body">
       <div
         v-if="showSuggestions && filteredParticipants.length > 0"
-        ref="suggestionsRef"
         class="mention-suggestions"
         :style="suggestionsStyle"
       >
@@ -55,7 +54,6 @@ const emit = defineEmits<{
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
-const suggestionsRef = ref<HTMLElement | null>(null)
 const showSuggestions = ref(false)
 const mentionQuery = ref('')
 const mentionStartPos = ref(0)

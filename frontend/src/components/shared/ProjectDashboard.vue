@@ -202,7 +202,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { WarningFilled, CircleCloseFilled, InfoFilled } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 
 const { t } = useI18n()
 
@@ -230,7 +230,7 @@ const stats = ref<{
 const fetchStats = async () => {
   loading.value = true
   try {
-    const { data } = await axios.get(`/api/v1/projects/${props.projectId}/stats`)
+    const { data } = await client.get(`/projects/${props.projectId}/stats`)
     stats.value = data
   } catch (err) {
     console.error('Failed to fetch project stats:', err)
@@ -286,15 +286,6 @@ const timelineStatus = computed(() => {
 const nextDueAssessment = computed(() => {
   if (!stats.value?.timeline.upcomingDueDates.length) return null
   return stats.value.timeline.upcomingDueDates[0]
-})
-
-const evidenceCoverageColor = computed(() => {
-  if (!stats.value) return 'var(--cat-text-tertiary)'
-  const pct = stats.value.evidenceCoverage.percent
-  if (pct === null) return 'var(--cat-text-tertiary)'
-  if (pct >= 80) return 'var(--cat-success)'
-  if (pct >= 50) return 'var(--cat-warning)'
-  return 'var(--cat-danger)'
 })
 
 const evidenceCoverageStatus = computed(() => {

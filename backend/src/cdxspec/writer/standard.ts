@@ -65,7 +65,7 @@ export interface StandardInputs {
  * (e.g. attestation map serializer) can reference the same value
  * the standard block emits.
  */
-export function requirementBomRef(row: Pick<RequirementRowInput, 'id' | 'imported_bom_ref'>): string {
+function requirementBomRef(row: Pick<RequirementRowInput, 'id' | 'imported_bom_ref'>): string {
   if (row.imported_bom_ref && row.imported_bom_ref.length > 0) {
     return row.imported_bom_ref;
   }
@@ -76,7 +76,7 @@ export function requirementBomRef(row: Pick<RequirementRowInput, 'id' | 'importe
  * Resolve the bom-ref for a standard. Same lossless-when-possible
  * preference as requirements.
  */
-export function standardBomRef(row: Pick<StandardRowInput, 'id' | 'imported_bom_ref'>): string {
+function standardBomRef(row: Pick<StandardRowInput, 'id' | 'imported_bom_ref'>): string {
   if (row.imported_bom_ref && row.imported_bom_ref.length > 0) {
     return row.imported_bom_ref;
   }

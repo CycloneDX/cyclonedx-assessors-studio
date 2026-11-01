@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { queryString } from '../utils/query.js';
+import { hasPermission, requireAssessmentWrite, requireAssessmentParticipant, visibleEvidenceIds } from '../utils/access.js';
 import type { Response } from 'express';
 import { Kysely } from 'kysely';
 import { z } from 'zod';
@@ -6,13 +8,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/connection.js';
 import type { Database } from '../db/types.js';
 import { logger } from '../utils/logger.js';
-import { AuthRequest, requireAuth, requirePermission, getPermissionsForRole } from '../middleware/auth.js';
+import { AuthRequest, requireAuth, requireSession, requirePermission, getPermissionsForRole } from '../middleware/auth.js';
 import { syncEntityTags, fetchTagsForEntities } from '../utils/tags.js';
-import { ASSESSMENT_STATE_CHANGED } from '../events/catalog.js';
+import { ASSESSMENT_CREATED, ASSESSMENT_STATE_CHANGED } from '../events/catalog.js';
 import { createNotification } from '../utils/notifications.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { validatePagination } from '../utils/pagination.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -38,6 +41,8 @@ const createAssessmentSchema = z.object({
   assessorIds: z.array(z.string().uuid()).optional(),
   assesseeIds: z.array(z.string().uuid()).optional(),
   tags: z.array(z.string()).optional(),
+  assessmentType: z.enum(['standards', 'targeted', 'tasks']).optional().default('standards'),
+  taskLabel: z.string().max(25).optional(),
 });
 
 // PUT /assessments/:id accepts `state` ONLY as a thin alias for
@@ -256,6 +261,51 @@ function countIncompleteRequirements(
   return { unassessedCount, missingRationaleCount };
 }
 
+const CLAIM_CLOSED_STATUSES = ['Accepted', 'Rejected'];
+const MITIGATION_CLOSED_STATUSES = ['Verified', 'Closed'];
+
+/**
+ * Returns any open claims and mitigations that must be resolved before the
+ * assessment can be closed. Claims are linked to an assessment via the
+ * attestation that belongs to the assessment. Mitigations are linked via
+ * the mitigation_claim join table.
+ */
+async function findOpenClaimsAndMitigations(
+  db: Kysely<Database>,
+  assessmentId: string,
+): Promise<{ openClaims: string[]; openMitigations: string[] }> {
+  // Claims linked to this assessment through their attestation
+  const claims = await db
+    .selectFrom('claim')
+    .innerJoin('attestation', 'attestation.id', 'claim.attestation_id')
+    .where('attestation.assessment_id', '=', assessmentId)
+    .select(['claim.id', 'claim.name', 'claim.status'])
+    .execute();
+
+  const openClaims = claims
+    .filter(c => !CLAIM_CLOSED_STATUSES.includes(c.status))
+    .map(c => c.name);
+
+  if (claims.length === 0) {
+    return { openClaims: [], openMitigations: [] };
+  }
+
+  const claimIds = claims.map(c => c.id);
+  const mitigations = await db
+    .selectFrom('mitigation')
+    .innerJoin('mitigation_claim', 'mitigation_claim.mitigation_id', 'mitigation.id')
+    .where('mitigation_claim.claim_id', 'in', claimIds)
+    .select(['mitigation.id', 'mitigation.title', 'mitigation.status'])
+    .distinct()
+    .execute();
+
+  const openMitigations = mitigations
+    .filter(m => !MITIGATION_CLOSED_STATUSES.includes(m.status ?? ''))
+    .map(m => m.title);
+
+  return { openClaims, openMitigations };
+}
+
 /**
  * Validate completion prerequisites for an assessment.
  */
@@ -287,6 +337,16 @@ async function validateCompletionPrerequisites(
   if (evidenceLinks.length === 0) {
     res.status(400).json({
       error: 'Cannot complete assessment without any evidence. At least one evidence item must be linked to a requirement.',
+    });
+    return false;
+  }
+
+  const { openClaims, openMitigations } = await findOpenClaimsAndMitigations(db, assessmentId);
+  if (openClaims.length > 0 || openMitigations.length > 0) {
+    res.status(400).json({
+      error: 'Cannot complete assessment: all linked claims must be Accepted or Rejected, and all linked mitigations must be Verified or Closed.',
+      openClaims,
+      openMitigations,
     });
     return false;
   }
@@ -346,8 +406,8 @@ router.get('/', requireAuth, requirePermission('assessments.view'), async (req: 
   try {
     const db = getDatabase();
     const { limit, offset } = validatePagination(req.query);
-    const state = req.query.state as string | undefined;
-    const projectId = req.query.projectId as string | undefined;
+    const state = queryString(req.query.state);
+    const projectId = queryString(req.query.projectId);
     const myOnly = req.query.myOnly === 'true';
 
     // assessments.view alone restricts the caller to assessments they
@@ -371,6 +431,8 @@ router.get('/', requireAuth, requirePermission('assessments.view'), async (req: 
         'assessment.title',
         'assessment.description',
         'assessment.state',
+        'assessment.assessment_type',
+        'assessment.task_label',
         'assessment.project_id',
         'project.name as project_name',
         'assessment.entity_id',
@@ -495,6 +557,8 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response): Promise
         'assessment.start_date',
         'assessment.end_date',
         'assessment.state',
+        'assessment.assessment_type',
+        'assessment.task_label',
         'assessment.created_at',
         'assessment.updated_at',
         'entity.name as entity_name',
@@ -539,6 +603,10 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response): Promise
         'assessment_requirement.requirement_id',
         'assessment_requirement.result',
         'assessment_requirement.rationale',
+        'assessment_requirement.conformance_score',
+        'assessment_requirement.conformance_rationale',
+        'assessment_requirement.confidence_score',
+        'assessment_requirement.confidence_rationale',
         'assessment_requirement.created_at',
         'assessment_requirement.updated_at',
         'requirement.identifier',
@@ -550,6 +618,24 @@ router.get('/:id', requireAuth, async (req: AuthRequest, res: Response): Promise
         'requirement.imported_bom_ref',
       ])
       .execute()) as Record<string, unknown>[];
+
+    // Targeted assessments have standard_id = null on the assessment row but
+    // their requirements carry standard_id. Derive the standard name from the
+    // requirements so the Framework / Standard field is always populated.
+    if (!assessment.standard_name && assessmentRequirements.length > 0) {
+      const reqStandardId = (assessmentRequirements[0] as Record<string, unknown>).standard_id as string | undefined;
+      if (reqStandardId) {
+        const std = await db
+          .selectFrom('standard')
+          .select(['name', 'version'])
+          .where('id', '=', reqStandardId)
+          .executeTakeFirst();
+        if (std) {
+          (assessment as Record<string, unknown>).standard_name = std.name;
+          (assessment as Record<string, unknown>).standard_version = std.version;
+        }
+      }
+    }
 
     const assessors = (await db
       .selectFrom('assessment_assessor')
@@ -609,6 +695,7 @@ router.post(
       // path when a many-to-many junction is added.
       const effectiveStandardId = data.standardId ?? data.standardIds?.[0] ?? null;
 
+      let projectName: string | null = null;
       if (data.projectId) {
         const project = await db
           .selectFrom('project')
@@ -620,6 +707,7 @@ router.post(
           res.status(404).json({ error: 'Project not found' });
           return;
         }
+        projectName = project.name;
       }
 
       await db
@@ -634,6 +722,8 @@ router.post(
             standardId: effectiveStandardId ?? undefined,
             dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
             state: 'new',
+            assessmentType: data.assessmentType,
+            taskLabel: data.taskLabel || undefined,
           })
         )
         .execute();
@@ -641,8 +731,15 @@ router.post(
       // Dedup before insert. The junction tables have composite PKs
       // on (assessment_id, user_id); duplicate ids in the request body
       // would otherwise crash with a constraint violation.
-      if (data.assessorIds && data.assessorIds.length > 0) {
-        const uniqueAssessorIds = Array.from(new Set(data.assessorIds));
+      // Writes are limited to assigned assessors (security review Z8), so a
+      // non-admin creator is always assigned, or they could not edit what
+      // they just created.
+      const creatorIsAdmin = req.user ? await hasPermission(req.user.role, 'admin.settings') : true;
+      const assessorIdsToAssign = creatorIsAdmin || !req.user
+        ? (data.assessorIds ?? [])
+        : [...(data.assessorIds ?? []), req.user.id];
+      if (assessorIdsToAssign.length > 0) {
+        const uniqueAssessorIds = Array.from(new Set(assessorIdsToAssign));
         await db
           .insertInto('assessment_assessor')
           .values(
@@ -673,12 +770,30 @@ router.post(
         await syncEntityTags(db, 'assessment_tag', 'assessment_id', assessmentId, data.tags);
       }
 
+      await logAudit(db, {
+        entityType: 'assessment',
+        entityId: assessmentId,
+        action: 'create',
+        userId: req.user?.id ?? null,
+        changes: { title: data.title, project_id: data.projectId ?? null },
+      });
+
       logger.info('Assessment created', {
         assessmentId,
         title: data.title,
         projectId: data.projectId,
         requestId: req.requestId,
       });
+
+      // Webhooks, chat, notification rules and the assigned users' email
+      // subscribe to this; it used to be declared but never emitted.
+      if (req.user) {
+        req.eventBus?.emit(
+          ASSESSMENT_CREATED,
+          { assessmentId, assessmentTitle: data.title, projectId: data.projectId ?? null, projectName, actorName: req.user.displayName },
+          { userId: req.user.id, displayName: req.user.displayName },
+        );
+      }
 
       res.status(201).json({
         id: assessmentId,
@@ -696,7 +811,7 @@ router.post(
   })
 );
 
-router.put('/:id', requireAuth, requirePermission('assessments.edit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.put('/:id', requireAuth, requirePermission('assessments.edit'), requireAssessmentWrite(), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const data = updateAssessmentSchema.parse(req.body);
     const db = getDatabase();
@@ -774,6 +889,19 @@ router.put('/:id', requireAuth, requirePermission('assessments.edit'), asyncHand
     await syncAssessors(db, req.params.id as string, data.assessorIds);
     await syncAssessees(db, req.params.id as string, data.assesseeIds);
 
+    // State transitions are logged as state_change inside
+    // applyAssessmentTransition; only log an update when data fields
+    // actually changed so a pure PUT-driven transition yields one row.
+    if (Object.keys(updateData).length > 0) {
+      await logAudit(db, {
+        entityType: 'assessment',
+        entityId: req.params.id as string,
+        action: 'update',
+        userId: req.user?.id ?? null,
+        changes: updateData,
+      });
+    }
+
     logger.info('Assessment updated', {
       assessmentId: req.params.id as string,
       requestId: req.requestId,
@@ -804,6 +932,7 @@ router.post(
   '/:id/start',
   requireAuth,
   requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       // The /start endpoint accepts an optional body carrying standardIds
@@ -831,26 +960,67 @@ router.post(
         return;
       }
 
+      // If the setup screen linked a standard or set a task label, persist those before starting
+      const startUpdates: Record<string, unknown> = {
+        state: 'in_progress',
+        start_date: new Date(),
+      };
+      if (bodyData.standardId) startUpdates.standard_id = bodyData.standardId;
+      if (bodyData.taskLabel) startUpdates.task_label = bodyData.taskLabel;
+      if (bodyData.assessmentType) startUpdates.assessment_type = bodyData.assessmentType;
+
       await db
         .updateTable('assessment')
-        .set({
-          state: 'in_progress',
-          start_date: new Date(),
-        })
+        .set(startUpdates)
         .where('id', '=', req.params.id as string)
         .execute();
 
+      // Re-fetch so standard_id / type / task_label are current for the requirement-loading logic below
+      const effectiveAssessment = {
+        ...assessment,
+        ...(bodyData.standardId ? { standard_id: bodyData.standardId } : {}),
+        ...(bodyData.assessmentType ? { assessment_type: bodyData.assessmentType } : {}),
+      };
+
+      // Task assessments have no requirements — they are freeform work items
+      if (effectiveAssessment.assessment_type === 'tasks') {
+        if (req.user) {
+          req.eventBus?.emit(
+            ASSESSMENT_STATE_CHANGED,
+            {
+              assessmentId: req.params.id as string,
+              assessmentTitle: assessment.title,
+              previousState: assessment.state,
+              newState: 'in_progress',
+            },
+            { userId: req.user.id, displayName: req.user.displayName },
+          );
+        }
+        res.json({ message: 'Assessment started successfully' });
+        return;
+      }
+
       let requirements;
 
-      // Priority: standard_id > entity_id standards > project_id standards > bodyData.standardIds
-      if (assessment.standard_id) {
-        // Load requirements from the specific standard
+      // Targeted assessments: use caller-supplied requirement IDs directly
+      if (effectiveAssessment.assessment_type === 'targeted') {
+        if (!bodyData.requirementIds || bodyData.requirementIds.length === 0) {
+          res.status(400).json({ error: 'requirementIds required for targeted assessments' });
+          return;
+        }
         requirements = (await db
           .selectFrom('requirement')
-          .where('requirement.standard_id', '=', assessment.standard_id)
+          .where('id', 'in', bodyData.requirementIds)
           .selectAll()
           .execute()) as Record<string, unknown>[];
-      } else if (assessment.entity_id) {
+      } else if (effectiveAssessment.standard_id) {
+        // Load all requirements from the specific standard
+        requirements = (await db
+          .selectFrom('requirement')
+          .where('requirement.standard_id', '=', effectiveAssessment.standard_id!)
+          .selectAll()
+          .execute()) as Record<string, unknown>[];
+      } else if (effectiveAssessment.entity_id) {
         // Load requirements from entity's associated standards
         requirements = (await db
           .selectFrom('requirement')
@@ -863,10 +1033,10 @@ router.post(
                 'requirement.standard_id'
               )
           )
-          .where('entity_standard.entity_id', '=', assessment.entity_id)
+          .where('entity_standard.entity_id', '=', effectiveAssessment.entity_id)
           .selectAll()
           .execute()) as Record<string, unknown>[];
-      } else if (assessment.project_id && assessment.project_id.trim() !== '') {
+      } else if (effectiveAssessment.project_id && effectiveAssessment.project_id.trim() !== '') {
         // Load requirements from project's associated standards
         requirements = (await db
           .selectFrom('requirement')
@@ -879,7 +1049,7 @@ router.post(
                 'requirement.standard_id'
               )
           )
-          .where('project_standard.project_id', '=', assessment.project_id)
+          .where('project_standard.project_id', '=', effectiveAssessment.project_id)
           .selectAll()
           .execute()) as Record<string, unknown>[];
       } else {
@@ -941,8 +1111,9 @@ router.post(
 
 router.post(
   '/:id/complete',
-  requireAuth,
+  requireSession,
   requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const db = getDatabase();
@@ -969,9 +1140,32 @@ router.post(
         .selectAll()
         .execute();
 
-      // Validate all prerequisites for completion
-      if (!await validateCompletionPrerequisites(db, req.params.id as string, requirements, res)) {
-        return;
+      if (assessment.assessment_type === 'tasks') {
+        // Task assessments have no requirements — just verify at least one directly-linked evidence item exists
+        const directEvidence = await db
+          .selectFrom('assessment_evidence')
+          .where('assessment_id', '=', req.params.id as string)
+          .selectAll()
+          .execute();
+        if (directEvidence.length === 0) {
+          res.status(400).json({ error: 'Cannot complete task assessment without any evidence. Link at least one evidence item before completing.' });
+          return;
+        }
+        const { openClaims: taskOpenClaims, openMitigations: taskOpenMitigations } =
+          await findOpenClaimsAndMitigations(db, req.params.id as string);
+        if (taskOpenClaims.length > 0 || taskOpenMitigations.length > 0) {
+          res.status(400).json({
+            error: 'Cannot complete assessment: all linked claims must be Accepted or Rejected, and all linked mitigations must be Verified or Closed.',
+            openClaims: taskOpenClaims,
+            openMitigations: taskOpenMitigations,
+          });
+          return;
+        }
+      } else {
+        // Validate all prerequisites for completion
+        if (!await validateCompletionPrerequisites(db, req.params.id as string, requirements, res)) {
+          return;
+        }
       }
 
       // Calculate conformance score
@@ -993,7 +1187,8 @@ router.post(
           assessmentId: req.params.id as string,
           assessmentTitle: assessment.title,
           previousState: assessment.state,
-          newState: 'completed',
+          // The real state name; the email and in-app builders accept it.
+          newState: 'complete',
         },
         { userId: req.user!.id, displayName: req.user!.displayName },
       );
@@ -1014,8 +1209,9 @@ router.post(
 // Archive an assessment (irreversible)
 router.post(
   '/:id/archive',
-  requireAuth,
+  requireSession,
   requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const db = getDatabase();
@@ -1065,6 +1261,7 @@ router.post(
   '/:id/reopen',
   requireAuth,
   requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const db = getDatabase();
@@ -1139,6 +1336,19 @@ router.post(
 const updateRequirementSchema = z.object({
   result: z.enum(['yes', 'no', 'partial', 'not_applicable']).nullable().optional(),
   rationale: z.string().nullable().optional(),
+  owner: z.string().max(255).nullable().optional(),
+  owner_email: z.string().max(255).nullable().optional(),
+  owner_role: z.string().max(255).nullable().optional(),
+  oe_entity: z.string().max(255).nullable().optional(),
+  business_unit: z.string().max(255).nullable().optional(),
+  region: z.string().max(100).nullable().optional(),
+  assessed_by: z.string().max(255).nullable().optional(),
+  assessment_date: z.string().nullable().optional(),
+  next_review_date: z.string().nullable().optional(),
+  conformance_score: z.number().min(0).max(1).nullable().optional(),
+  conformance_rationale: z.string().nullable().optional(),
+  confidence_score: z.number().min(0).max(1).nullable().optional(),
+  confidence_rationale: z.string().nullable().optional(),
 });
 
 const addWorkNoteSchema = z.object({
@@ -1147,6 +1357,11 @@ const addWorkNoteSchema = z.object({
 
 const startAssessmentSchema = z.object({
   standardIds: z.array(z.string().uuid()).optional(),
+  requirementIds: z.array(z.string().uuid()).optional(),
+  // For setup-screen promotions: allow linking a standard, changing type, or setting task label at start time
+  standardId: z.string().uuid().optional(),
+  taskLabel: z.string().max(25).optional(),
+  assessmentType: z.enum(['standards', 'targeted', 'tasks']).optional(),
 });
 
 // =====================================================================
@@ -1216,6 +1431,23 @@ async function applyAssessmentTransition(
   | { ok: false; status: number; body: Record<string, unknown> }
 > {
   const from = assessment.state as AssessmentState;
+
+  // Final, high-consequence states seal the assessment (completion locks
+  // it read-only, archive/cancel are terminal). These must not be driven
+  // programmatically: an API key that reaches this point can move an
+  // assessment through working states, but sealing it requires an
+  // interactive session so a human is accountable for the transition.
+  const FINAL_STATES: AssessmentState[] = ['complete', 'archived', 'cancelled'];
+  if (FINAL_STATES.includes(to) && req.authMethod === 'apikey') {
+    return {
+      ok: false,
+      status: 403,
+      body: {
+        error: `Transitioning to '${to}' requires an interactive session and cannot be performed with an API key.`,
+        reason: 'session_required',
+      },
+    };
+  }
 
   if (from === to) {
     return {
@@ -1327,6 +1559,14 @@ async function applyAssessmentTransition(
     .where('id', '=', assessment.id)
     .execute();
 
+  await logAudit(db, {
+    entityType: 'assessment',
+    entityId: assessment.id,
+    action: 'state_change',
+    userId: req.user?.id ?? null,
+    changes: { from, to },
+  });
+
   req.eventBus?.emit(
     ASSESSMENT_STATE_CHANGED,
     {
@@ -1352,6 +1592,7 @@ router.post(
   '/:id/transition',
   requireAuth,
   requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     let data: z.infer<typeof transitionSchema>;
     try {
@@ -1401,6 +1642,7 @@ router.put(
   '/:id/requirements/:requirementId',
   requireAuth,
   requirePermission('assessments.edit'),
+  requireAssessmentWrite(),
   async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = updateRequirementSchema.parse(req.body);
@@ -1433,6 +1675,19 @@ router.put(
       const updateData: Record<string, unknown> = {};
       if (data.result !== undefined) updateData.result = data.result;
       if (data.rationale !== undefined) updateData.rationale = data.rationale;
+      if (data.owner !== undefined) updateData.owner = data.owner;
+      if (data.owner_email !== undefined) updateData.owner_email = data.owner_email;
+      if (data.owner_role !== undefined) updateData.owner_role = data.owner_role;
+      if (data.oe_entity !== undefined) updateData.oe_entity = data.oe_entity;
+      if (data.business_unit !== undefined) updateData.business_unit = data.business_unit;
+      if (data.region !== undefined) updateData.region = data.region;
+      if (data.assessed_by !== undefined) updateData.assessed_by = data.assessed_by;
+      if (data.assessment_date !== undefined) updateData.assessment_date = data.assessment_date || null;
+      if (data.next_review_date !== undefined) updateData.next_review_date = data.next_review_date || null;
+      if (data.conformance_score !== undefined) updateData.conformance_score = data.conformance_score;
+      if (data.conformance_rationale !== undefined) updateData.conformance_rationale = data.conformance_rationale;
+      if (data.confidence_score !== undefined) updateData.confidence_score = data.confidence_score;
+      if (data.confidence_rationale !== undefined) updateData.confidence_rationale = data.confidence_rationale;
 
       if (Object.keys(updateData).length > 0) {
         await db
@@ -1510,12 +1765,21 @@ router.get(
             )
         )
         .innerJoin(
-          'app_user',
+          'app_user as author_user',
           (join) =>
             join.onRef(
-              'app_user.id',
+              'author_user.id',
               '=',
               'evidence.author_id'
+            )
+        )
+        .leftJoin(
+          'app_user as reviewer_user',
+          (join) =>
+            join.onRef(
+              'reviewer_user.id',
+              '=',
+              'evidence.reviewer_id'
             )
         )
         .where('assessment_requirement_evidence.assessment_requirement_id', '=', assessmentReq.id)
@@ -1530,16 +1794,20 @@ router.get(
           'evidence.classification',
           'evidence.created_at',
           'evidence.expires_on',
-          'app_user.display_name as author_name',
+          'author_user.display_name as author_name',
+          'reviewer_user.display_name as reviewer_name',
         ])
         .execute()) as Record<string, unknown>[];
 
       const evidenceIds = evidence.map((e: Record<string, unknown>) => e.id as string);
       const tagsByEvidence = await fetchTagsForEntities(db, 'evidence_tag', 'evidence_id', evidenceIds);
-      const evidenceWithTags = evidence.map((e: Record<string, unknown>) => ({
-        ...e,
-        tags: tagsByEvidence[e.id as string] || [],
-      }));
+      const visible = await visibleEvidenceIds(db, req.user!, evidence.map((e: Record<string, unknown>) => e.id as string));
+      const evidenceWithTags = evidence
+        .filter((e: Record<string, unknown>) => visible === null || visible.has(e.id as string))
+        .map((e: Record<string, unknown>) => ({
+          ...e,
+          tags: tagsByEvidence[e.id as string] || [],
+        }));
 
       res.json({
         data: evidenceWithTags,
@@ -1549,6 +1817,80 @@ router.get(
       res.status(500).json({ error: 'Internal server error' });
     }
   }
+);
+
+// Returns requirements for a standard, optionally filtered by level.
+// Used by the Targeted assessment setup screen to populate the picker.
+router.get(
+  '/:id/requirements-available',
+  requireAuth,
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    if (!(await authorizeAssessmentRead(req, res, req.params.id as string))) return;
+    const db = getDatabase();
+
+    const assessment = await db
+      .selectFrom('assessment')
+      .where('id', '=', req.params.id as string)
+      .selectAll()
+      .executeTakeFirst();
+
+    if (!assessment) {
+      res.status(404).json({ error: 'Assessment not found' });
+      return;
+    }
+
+    if (!assessment.standard_id) {
+      res.json({ levels: [], requirements: [], noStandard: true });
+      return;
+    }
+
+    const { levelId } = req.query as { levelId?: string };
+
+    // Fetch all levels for the standard so the UI can show filter chips
+    const levels = await db
+      .selectFrom('level')
+      .where('standard_id', '=', assessment.standard_id)
+      .selectAll()
+      .execute();
+
+    let query = db
+      .selectFrom('requirement')
+      .where('requirement.standard_id', '=', assessment.standard_id);
+
+    if (levelId) {
+      query = query
+        .innerJoin('level_requirement', 'level_requirement.requirement_id', 'requirement.id')
+        .where('level_requirement.level_id', '=', levelId) as typeof query;
+    }
+
+    const requirements = await query.selectAll('requirement').execute();
+
+    // Attach level membership to each requirement so the UI can group them
+    const levelRequirements = await db
+      .selectFrom('level_requirement')
+      .innerJoin('level', 'level.id', 'level_requirement.level_id')
+      .where('level.standard_id', '=', assessment.standard_id)
+      .select(['level_requirement.requirement_id', 'level_requirement.level_id', 'level.identifier as level_identifier', 'level.title as level_title'])
+      .execute();
+
+    const levelsByReqId: Record<string, { id: string; identifier: string; title: string }[]> = {};
+    for (const lr of levelRequirements) {
+      if (!levelsByReqId[lr.requirement_id]) levelsByReqId[lr.requirement_id] = [];
+      levelsByReqId[lr.requirement_id].push({
+        id: lr.level_id,
+        identifier: lr.level_identifier ?? '',
+        title: lr.level_title ?? '',
+      });
+    }
+
+    res.json({
+      levels,
+      requirements: requirements.map(r => ({
+        ...r,
+        levels: levelsByReqId[(r as { id: string }).id] || [],
+      })),
+    });
+  })
 );
 
 router.get(
@@ -1603,7 +1945,7 @@ router.get(
       for (const e of evidence) {
         const eId = e.id as string;
         if (!evidenceMap.has(eId)) {
-          evidenceMap.set(eId, { ...e, requirement_ids: [e.requirement_id] });
+          evidenceMap.set(eId, { ...e, requirement_ids: [e.requirement_id], direct_link: false });
         } else {
           const eRecord = evidenceMap.get(eId);
           if (eRecord) {
@@ -1611,7 +1953,37 @@ router.get(
           }
         }
       }
-      const uniqueEvidence = Array.from(evidenceMap.values());
+
+      // Also include evidence directly linked to the assessment (task assessments)
+      const directEvidence = (await db
+        .selectFrom('assessment_evidence')
+        .innerJoin('evidence', 'evidence.id', 'assessment_evidence.evidence_id')
+        .leftJoin('app_user as author', 'author.id', 'evidence.author_id')
+        .where('assessment_evidence.assessment_id', '=', req.params.id as string)
+        .select([
+          'evidence.id',
+          'evidence.name',
+          'evidence.description',
+          'evidence.state',
+          'evidence.author_id',
+          'evidence.is_counter_evidence',
+          'evidence.classification',
+          'evidence.created_at',
+          'evidence.expires_on',
+          'author.display_name as author_name',
+        ] as const)
+        .execute()) as Record<string, unknown>[];
+
+      for (const e of directEvidence) {
+        const eId = e.id as string;
+        if (!evidenceMap.has(eId)) {
+          evidenceMap.set(eId, { ...e, requirement_ids: [], direct_link: true });
+        }
+      }
+
+      const visible = await visibleEvidenceIds(db, req.user!, Array.from(evidenceMap.keys()));
+      const uniqueEvidence = Array.from(evidenceMap.values())
+        .filter((e) => visible === null || visible.has(e.id as string));
 
       const evidenceIds = uniqueEvidence.map((e: Record<string, unknown>) => (e.id as string));
       const tagsByEvidence = await fetchTagsForEntities(db, 'evidence_tag', 'evidence_id', evidenceIds);
@@ -1628,6 +2000,69 @@ router.get(
       res.status(500).json({ error: 'Internal server error' });
     }
   }
+);
+
+// Link an existing evidence item directly to an assessment (task assessments)
+router.post(
+  '/:id/evidence/link',
+  requireAuth,
+  requirePermission('assessments.edit'),
+  requireAssessmentWrite(),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    if (!(await authorizeAssessmentRead(req, res, req.params.id as string))) return;
+    const db = getDatabase();
+
+    const { evidenceId } = z.object({ evidenceId: z.string().uuid() }).parse(req.body);
+
+    const assessment = await db
+      .selectFrom('assessment')
+      .where('id', '=', req.params.id as string)
+      .select(['id', 'state'])
+      .executeTakeFirst();
+
+    if (!assessment) {
+      res.status(404).json({ error: 'Assessment not found' });
+      return;
+    }
+    if (getReadOnlyError(assessment.state)) {
+      res.status(409).json({ error: getReadOnlyError(assessment.state) });
+      return;
+    }
+
+    const ev = await db.selectFrom('evidence').where('id', '=', evidenceId).select('id').executeTakeFirst();
+    if (!ev) {
+      res.status(404).json({ error: 'Evidence not found' });
+      return;
+    }
+
+    await db
+      .insertInto('assessment_evidence')
+      .values({ assessment_id: req.params.id as string, evidence_id: evidenceId, created_at: new Date() })
+      .onConflict(oc => oc.columns(['assessment_id', 'evidence_id']).doNothing())
+      .execute();
+
+    res.json({ message: 'Evidence linked successfully' });
+  })
+);
+
+// Unlink a directly-linked evidence item from an assessment
+router.delete(
+  '/:id/evidence/:evidenceId/unlink',
+  requireAuth,
+  requirePermission('assessments.edit'),
+  requireAssessmentWrite(),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    if (!(await authorizeAssessmentRead(req, res, req.params.id as string))) return;
+    const db = getDatabase();
+
+    await db
+      .deleteFrom('assessment_evidence')
+      .where('assessment_id', '=', req.params.id as string)
+      .where('evidence_id', '=', req.params.evidenceId as string)
+      .execute();
+
+    res.json({ message: 'Evidence unlinked successfully' });
+  })
 );
 
 // Get all claims for an assessment (via its attestation(s))
@@ -1908,6 +2343,7 @@ router.post(
   '/:id/notes',
   requireAuth,
   requirePermission('assessments.notes'),
+  requireAssessmentParticipant(),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = addWorkNoteSchema.parse(req.body);
@@ -2002,6 +2438,7 @@ router.delete(
   '/:id',
   requireAuth,
   requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const db = getDatabase();
@@ -2021,28 +2458,15 @@ router.delete(
         return;
       }
 
-      // Delete related records first
-      await db.deleteFrom('work_note')
-        .where('assessment_id', '=', req.params.id as string)
-        .execute();
-
-      await db.deleteFrom('assessment_requirement')
-        .where('assessment_id', '=', req.params.id as string)
-        .execute();
-
-      await db.deleteFrom('assessment_assessor')
-        .where('assessment_id', '=', req.params.id as string)
-        .execute();
-
-      await db.deleteFrom('assessment_assessee')
-        .where('assessment_id', '=', req.params.id as string)
-        .execute();
-
-      await db.deleteFrom('assessment_tag')
-        .where('assessment_id', '=', req.params.id as string)
-        .execute();
-
-      await db.deleteFrom('assessment')
+      // Soft delete: mark the row deleted (the public `assessment` name is a
+      // view that hides deleted_at IS NOT NULL rows) and leave all child rows
+      // — work_note, requirements, assessor/assessee assignments, tags —
+      // intact so a restore is faithful. The child rows only surface through
+      // the assessment, which is now hidden. Permanent removal (and the
+      // dependent-row cleanup that RESTRICT foreign keys require) happens in
+      // the scheduled purge job.
+      await db.updateTable('assessment')
+        .set({ deleted_at: new Date() })
         .where('id', '=', req.params.id as string)
         .execute();
 
@@ -2055,6 +2479,47 @@ router.delete(
       res.json({ message: 'Assessment deleted' });
     } catch (error) {
       logger.error('Delete assessment error', { error, requestId: req.requestId });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  })
+);
+
+// Restore a soft-deleted assessment. Targets the physical table (assessment_raw)
+// because the assessment view hides deleted rows, so a plain updateTable through
+// the view could not see the row to clear its deleted_at.
+router.post(
+  '/:id/restore',
+  requireAuth,
+  requirePermission('assessments.manage'),
+  requireAssessmentWrite(),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      const db = getDatabase();
+      const row = await db
+        .selectFrom('assessment_raw')
+        .select(['id', 'deleted_at'])
+        .where('id', '=', req.params.id as string)
+        .executeTakeFirst();
+
+      if (!row) {
+        res.status(404).json({ error: 'Assessment not found' });
+        return;
+      }
+      if (!row.deleted_at) {
+        res.status(409).json({ error: 'Assessment is not deleted' });
+        return;
+      }
+
+      await db
+        .updateTable('assessment_raw')
+        .set({ deleted_at: null })
+        .where('id', '=', req.params.id as string)
+        .execute();
+
+      logger.info('Assessment restored', { assessmentId: req.params.id as string, requestId: req.requestId });
+      res.json({ message: 'Assessment restored' });
+    } catch (error) {
+      logger.error('Restore assessment error', { error, requestId: req.requestId });
       res.status(500).json({ error: 'Internal server error' });
     }
   })

@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import type { Response } from 'express';
 import crypto from 'node:crypto';
 import { getDatabase } from '../db/connection.js';
-import { AuthRequest, requireAuth, hashApiKey, getPermissionsForRole } from '../middleware/auth.js';
+import { AuthRequest, requireAuth, requireSession, hashApiKey, getPermissionsForRole } from '../middleware/auth.js';
 import { asyncHandler } from '../utils/route-helpers.js';
 import { logger } from '../utils/logger.js';
 import { logAudit } from '../utils/audit.js';
@@ -25,16 +26,28 @@ function generateApiKey(): { key: string; prefix: string } {
  * Create a new API key for the authenticated user (or another user if admin).
  * Body: { name: string, expiresInDays?: number, userId?: string }
  */
+const DEFAULT_API_KEY_DAYS = 90;
+const MAX_API_KEY_DAYS = 365;
+const createApiKeySchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  expiresInDays: z.number().int().min(1).max(MAX_API_KEY_DAYS).optional(),
+  userId: z.string().uuid().optional(),
+});
+
 router.post(
   '/',
-  requireAuth,
+  requireSession,
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
-    const { name, expiresInDays, userId } = req.body;
-
-    if (!name || typeof name !== 'string' || name.length < 1 || name.length > 255) {
-      res.status(400).json({ error: 'A name (1 to 255 characters) is required.' });
+    const parsed = createApiKeySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: `A name (1 to 255 characters) is required; expiresInDays must be a whole number from 1 to ${MAX_API_KEY_DAYS}.`,
+      });
       return;
     }
+    const { name, userId } = parsed.data;
+    // Keys always expire (security review A3): default 90 days, at most a year.
+    const expiresInDays = parsed.data.expiresInDays ?? DEFAULT_API_KEY_DAYS;
 
     // Non-admins can only create keys for themselves
     const userPermissions = await getPermissionsForRole(req.user!.role);
@@ -67,9 +80,7 @@ router.post(
     const { key, prefix } = generateApiKey();
     const keyHash = hashApiKey(key);
 
-    const expiresAt = expiresInDays
-      ? new Date(Date.now() + expiresInDays * 86400000)
-      : null;
+    const expiresAt = new Date(Date.now() + expiresInDays * 86400000);
     const row = await db
       .insertInto('api_key')
       .values({

@@ -2,6 +2,10 @@
   <div class="entities-container">
     <PageHeader title="Entities">
       <template #actions>
+        <el-button v-if="authStore.hasAnyPermission('entities.create', 'entities.edit')" @click="showImportDialog = true">
+          <el-icon class="mr-2"><Upload /></el-icon>
+          Import
+        </el-button>
         <el-button v-if="authStore.hasPermission('entities.create')" type="primary" @click="showCreateDialog">
           <el-icon class="mr-2"><Plus /></el-icon>
           New Entity
@@ -14,6 +18,26 @@
       <el-alert v-if="error" type="error" :closable="true" @close="error = ''">
         {{ error }}
       </el-alert>
+
+      <el-tabs v-model="activeMainTab" class="entities-main-tabs">
+        <el-tab-pane label="Directory" name="directory">
+
+      <!-- KPI Ribbon -->
+      <div v-if="!loading && entities.length > 0" class="entity-kpi-ribbon">
+        <div
+          v-for="kpi in entityKpis"
+          :key="kpi.type"
+          class="entity-kpi-tile"
+          :class="[`entity-kpi-tile--${kpi.type}`, { 'entity-kpi-tile--active': filterEntityType === kpi.type }]"
+          role="button"
+          :aria-pressed="filterEntityType === kpi.type"
+          :title="filterEntityType === kpi.type ? `Clear filter` : `Show ${kpi.label} only`"
+          @click="filterEntityType = filterEntityType === kpi.type ? '' : kpi.type"
+        >
+          <span class="entity-kpi-count">{{ kpi.count }}</span>
+          <span class="entity-kpi-label">{{ kpi.label }}</span>
+        </div>
+      </div>
 
       <!-- Filters and View Toggle -->
       <div class="filter-section">
@@ -136,6 +160,13 @@
             </template>
           </el-table-column>
 
+          <el-table-column label="Part of" min-width="160" sortable>
+            <template #default="{ row }">
+              <span v-if="row.parentName" class="parent-name-cell">{{ row.parentName }}</span>
+              <span v-else class="text-muted">—</span>
+            </template>
+          </el-table-column>
+
           <el-table-column label="Standards" min-width="100">
             <template #default="{ row }">
               <el-tooltip
@@ -157,6 +188,17 @@
           <el-table-column label="Assessments" min-width="100">
             <template #default="{ row }">
               <span class="assessment-count">{{ row.assessmentCount || 0 }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="Location" min-width="150">
+            <template #default="{ row }">
+              <span v-if="row.locality || row.country" class="location-cell">
+                <span v-if="row.locality">{{ row.locality }}</span>
+                <span v-if="row.locality && row.country" class="loc-sep">, </span>
+                <span v-if="row.country">{{ row.country }}</span>
+              </span>
+              <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
 
@@ -209,6 +251,22 @@
           @navigate="navigateToEntityById"
         />
       </template>
+
+        </el-tab-pane>
+
+        <el-tab-pane label="Relationships" name="relationships">
+          <RelationshipsTab
+            v-if="!loading"
+            :entities="entities"
+            :graph-edges="graphEdges"
+          />
+          <div v-else class="loading-container">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <p>Loading...</p>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+
     </div>
 
     <!-- Create/Edit Entity Dialog -->
@@ -255,6 +313,103 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- Import Dialog (admin only) -->
+    <el-dialog v-model="showImportDialog" title="Import Entities" width="720px" @close="resetImport">
+      <div v-if="!importResult">
+        <!-- Drop zone -->
+        <div
+          class="import-dropzone"
+          :class="{ 'import-dropzone--active': importDragOver }"
+          @dragover.prevent="importDragOver = true"
+          @dragleave.prevent="importDragOver = false"
+          @drop.prevent="onImportDrop"
+          @click="importFileRef?.click()"
+        >
+          <el-icon :size="36" class="import-drop-icon"><Upload /></el-icon>
+          <p class="import-drop-primary">Drop a file here or click to browse</p>
+          <p class="import-drop-hint">Accepts <strong>.csv</strong> or <strong>.json</strong> · Max 5 MB</p>
+          <input ref="importFileRef" type="file" accept=".csv,.json" class="sr-only" @change="onImportFileChange" />
+        </div>
+
+        <!-- Format guide -->
+        <el-collapse class="import-format-guide">
+          <el-collapse-item title="Expected file format" name="fmt">
+            <div class="import-format-tabs">
+              <div>
+                <p class="fmt-label">CSV columns (header row required):</p>
+                <code class="fmt-code">entity_name, parent_name, description, entity_type, country, region, locality, timezone, state</code>
+                <p class="fmt-note">Only <code>entity_name</code> is required. <code>entity_type</code> must be one of: organization · business_unit · team · product · product_version · component · service</p>
+              </div>
+              <div class="mt-3">
+                <p class="fmt-label">JSON — array of objects:</p>
+                <code class="fmt-code">[ { "name": "HQ", "entityType": "organization" }, … ]</code>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+
+        <!-- Preview table -->
+        <div v-if="importPreview.length > 0" class="import-preview">
+          <div class="import-preview-header">
+            <span class="import-preview-title">Preview — {{ importPreview.length }} row{{ importPreview.length !== 1 ? 's' : '' }} from <em>{{ importFileName }}</em></span>
+            <el-button size="small" text @click="resetImport">Clear</el-button>
+          </div>
+          <el-table :data="importPreview.slice(0, 10)" size="small" border max-height="260">
+            <el-table-column prop="name" label="Name" min-width="160" />
+            <el-table-column prop="parentName" label="Parent" min-width="140">
+              <template #default="{ row }">{{ row.parentName || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="entityType" label="Type" min-width="110">
+              <template #default="{ row }">{{ row.entityType || 'team' }}</template>
+            </el-table-column>
+            <el-table-column prop="country" label="Country" min-width="100">
+              <template #default="{ row }">{{ row.country || '—' }}</template>
+            </el-table-column>
+          </el-table>
+          <p v-if="importPreview.length > 10" class="import-preview-more">… and {{ importPreview.length - 10 }} more rows</p>
+        </div>
+      </div>
+
+      <!-- Result panel -->
+      <div v-else class="import-result">
+        <el-result
+          :icon="importResult.errors.length > 0 && importResult.inserted + importResult.updated === 0 ? 'error' : 'success'"
+          :title="importResult.inserted + importResult.updated === 0 ? 'Import failed' : 'Import complete'"
+        >
+          <template #sub-title>
+            <div class="import-result-stats">
+              <el-tag type="success">{{ importResult.inserted }} inserted</el-tag>
+              <el-tag type="info">{{ importResult.updated }} updated</el-tag>
+              <el-tag v-if="importResult.errors.length" type="warning">{{ importResult.errors.length }} warning{{ importResult.errors.length !== 1 ? 's' : '' }}</el-tag>
+            </div>
+          </template>
+          <template v-if="importResult.errors.length > 0" #extra>
+            <el-collapse>
+              <el-collapse-item :title="`${importResult.errors.length} warning(s)`" name="errs">
+                <ul class="import-error-list">
+                  <li v-for="(e, i) in importResult.errors" :key="i">{{ e }}</li>
+                </ul>
+              </el-collapse-item>
+            </el-collapse>
+          </template>
+        </el-result>
+      </div>
+
+      <template #footer>
+        <el-button @click="resetImport(); showImportDialog = false">
+          {{ importResult ? 'Close' : 'Cancel' }}
+        </el-button>
+        <el-button
+          v-if="!importResult && importPreview.length > 0"
+          type="primary"
+          :loading="importing"
+          @click="runImport"
+        >
+          Import {{ importPreview.length }} row{{ importPreview.length !== 1 ? 's' : '' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -263,13 +418,14 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Loading, FolderOpened, Plus, Grid, Share } from '@element-plus/icons-vue'
-import axios from 'axios'
+import { Loading, FolderOpened, Plus, Grid, Share, Upload } from '@element-plus/icons-vue'
+import client from '@/api/client'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import StateBadge from '@/components/shared/StateBadge.vue'
 import RowActions from '@/components/shared/RowActions.vue'
 import TagInput from '@/components/shared/TagInput.vue'
 import RelationshipGraph from '@/components/shared/RelationshipGraph.vue'
+import RelationshipsTab from '@/components/entities/RelationshipsTab.vue'
 import { getEntities, createEntity, updateEntity, deleteEntity as deleteEntityAPI } from '@/api/entities'
 import { listTags } from '@/api/tags'
 import { tagPillStyle } from '@/utils/tagColor'
@@ -290,6 +446,137 @@ const allEntityTypes: EntityType[] = [
   'service',
   'project',
 ]
+
+// ── Import state ─────────────────────────────────────────────────────────────
+interface ImportPreviewRow {
+  name: string
+  parentName: string | null
+  entityType: string | null
+  description: string | null
+  country: string | null
+  region: string | null
+  locality: string | null
+  timezone: string | null
+  state: string | null
+}
+
+const showImportDialog = ref(false)
+const importDragOver = ref(false)
+const importFileRef = ref<HTMLInputElement | null>(null)
+const importPreview = ref<ImportPreviewRow[]>([])
+const importFileName = ref('')
+const importing = ref(false)
+const importResult = ref<{ inserted: number; updated: number; total: number; errors: string[] } | null>(null)
+
+function parseImportCSV(text: string): ImportPreviewRow[] {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
+  if (lines.length < 2) return []
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/[\s-]+/g, '_'))
+  const rows: ImportPreviewRow[] = []
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim()
+    if (!line) continue
+    const values: string[] = []
+    let cur = '', inQ = false
+    for (const ch of line) {
+      if (ch === '"') inQ = !inQ
+      else if (ch === ',' && !inQ) { values.push(cur.trim()); cur = '' }
+      else cur += ch
+    }
+    values.push(cur.trim())
+    const obj: Record<string, string> = {}
+    headers.forEach((h, idx) => { if (values[idx] !== undefined) obj[h] = values[idx] })
+    const name = obj.entity_name || obj.name
+    if (!name) continue
+    rows.push({
+      name, parentName: obj.parent_name || obj.parent_entity_name || null,
+      entityType: obj.entity_type || obj.entitytype || null,
+      description: obj.description || null, country: obj.country || null,
+      region: obj.region || null, locality: obj.locality || obj.city || null,
+      timezone: obj.timezone || null, state: obj.state || null,
+    })
+  }
+  return rows
+}
+
+function parseImportJSON(text: string): ImportPreviewRow[] {
+  const parsed = JSON.parse(text)
+  const arr = Array.isArray(parsed) ? parsed : parsed.entities ?? parsed.data ?? []
+  return arr.map((item: Record<string, unknown>) => ({
+    name: String(item.name || item.entity_name || '').trim(),
+    parentName: String(item.parentName || item.parent_name || '').trim() || null,
+    entityType: item.entityType ? String(item.entityType) : (item.entity_type ? String(item.entity_type) : null),
+    description: item.description ? String(item.description) : null,
+    country: item.country ? String(item.country) : null,
+    region: item.region ? String(item.region) : null,
+    locality: item.locality ? String(item.locality) : null,
+    timezone: item.timezone ? String(item.timezone) : null,
+    state: item.state ? String(item.state) : null,
+  })).filter((r: ImportPreviewRow) => r.name)
+}
+
+function loadImportFile(file: File) {
+  importFileName.value = file.name
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const text = e.target?.result as string
+      importPreview.value = file.name.endsWith('.json') ? parseImportJSON(text) : parseImportCSV(text)
+      if (importPreview.value.length === 0) ElMessage.warning('No valid rows found in file')
+    } catch (err) {
+      ElMessage.error(`Failed to parse file: ${(err as Error).message}`)
+    }
+  }
+  reader.readAsText(file)
+}
+
+function onImportFileChange(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (file) loadImportFile(file)
+}
+
+function onImportDrop(e: DragEvent) {
+  importDragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) loadImportFile(file)
+}
+
+async function runImport() {
+  if (importPreview.value.length === 0) return
+  importing.value = true
+  try {
+    const formData = new FormData()
+    const content = JSON.stringify(importPreview.value.map(r => ({
+      name: r.name, parentName: r.parentName, entityType: r.entityType,
+      description: r.description, country: r.country, region: r.region,
+      locality: r.locality, timezone: r.timezone, state: r.state,
+    })))
+    const blob = new Blob([content], { type: 'application/json' })
+    formData.append('file', blob, 'import.json')
+    const { data } = await client.post('/entities/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    importResult.value = data
+    await fetchEntities()
+  } catch (err) {
+    const e = err as { response?: { data?: { error?: string } } }
+    ElMessage.error(e.response?.data?.error || 'Import failed')
+  } finally {
+    importing.value = false
+  }
+}
+
+function resetImport() {
+  importPreview.value = []
+  importFileName.value = ''
+  importResult.value = null
+  importDragOver.value = false
+  if (importFileRef.value) importFileRef.value.value = ''
+}
+// ── End import state ──────────────────────────────────────────────────────────
+
+// Tab
+const activeMainTab = ref('directory')
 
 // State
 const loading = ref(true)
@@ -332,6 +619,20 @@ const formRules = {
 }
 
 // Computed
+const entityKpis = computed(() => {
+  const counts: Record<string, number> = {}
+  for (const e of entities.value) {
+    if (e.state === 'archived') continue
+    counts[e.entityType] = (counts[e.entityType] || 0) + 1
+  }
+  const order = ['organization', 'business_unit', 'team', 'product', 'product_version', 'component', 'service']
+  const labels: Record<string, string> = {
+    organization: 'Organizations', business_unit: 'Business Units', team: 'Teams',
+    product: 'Products', product_version: 'Versions', component: 'Components', service: 'Services', project: 'Projects',
+  }
+  return order.filter(t => counts[t]).map(t => ({ type: t, label: labels[t], count: counts[t] }))
+})
+
 const filteredEntities = computed(() => {
   const filtered = entities.value.filter(entity => {
     // Filter by entity type
@@ -414,7 +715,7 @@ const fetchEntities = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await getEntities()
+    const response = await getEntities({ limit: 100 })
     entities.value = response.data || []
   } catch (err: unknown) {
     // biome-ignore lint/suspicious/noExplicitAny: axios error handling
@@ -432,7 +733,7 @@ const fetchRelationshipGraph = async () => {
     if (filterPerspective.value) {
       params.perspective = filterPerspective.value
     }
-    const response = await axios.get('/api/v1/entities/relationship-graph', { params })
+    const response = await client.get('/entities/relationship-graph', { params })
     graphEntities.value = response.data.entities || []
     graphEdges.value = response.data.edges || []
   } catch (err: unknown) {
@@ -450,7 +751,7 @@ const fetchPerspectiveFilter = async () => {
     return
   }
   try {
-    const response = await axios.get('/api/v1/entities/relationship-graph', {
+    const response = await client.get('/entities/relationship-graph', {
       params: { perspective: filterPerspective.value }
     })
     const entityIds = (response.data.entities || []).map((e: Record<string, unknown>) => e.id as string)
@@ -597,6 +898,7 @@ function fetchTagSuggestions(queryString: string, cb: (results: Tag[]) => void) 
 onMounted(() => {
   fetchEntities()
   fetchAvailableTags()
+  fetchRelationshipGraph()
 })
 </script>
 
@@ -609,6 +911,160 @@ onMounted(() => {
 
 .entities-content {
   padding: 0 var(--cat-spacing-6) var(--cat-spacing-6);
+}
+
+.entities-main-tabs {
+  :deep(.el-tabs__header) {
+    margin-bottom: var(--cat-spacing-4);
+  }
+
+  :deep(.el-tabs__content) {
+    overflow: visible;
+  }
+
+  :deep(.el-tab-pane) {
+    outline: none;
+  }
+}
+
+.entity-kpi-ribbon {
+  display: flex;
+  gap: var(--cat-spacing-3);
+  margin-bottom: var(--cat-spacing-4);
+  flex-wrap: wrap;
+}
+
+.entity-kpi-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--cat-spacing-3) var(--cat-spacing-4);
+  border-radius: var(--cat-radius-md);
+  background: var(--cat-bg-card);
+  border: 1px solid var(--cat-border-subtle);
+  min-width: 110px;
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.1s, box-shadow 0.1s, background 0.15s;
+
+  &:hover { background: var(--cat-bg-hover); transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.12); }
+  &:active { transform: translateY(0); }
+
+  &--active {
+    background: var(--cat-bg-hover);
+    box-shadow: 0 0 0 2px currentColor;
+  }
+
+  &--organization { border-top: 3px solid #6366f1; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #6366f1; } }
+  &--business_unit { border-top: 3px solid #0ea5e9; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #0ea5e9; } }
+  &--team         { border-top: 3px solid #10b981; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #10b981; } }
+  &--product      { border-top: 3px solid #f59e0b; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #f59e0b; } }
+  &--product_version { border-top: 3px solid #f97316; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #f97316; } }
+  &--component    { border-top: 3px solid #8b5cf6; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #8b5cf6; } }
+  &--service      { border-top: 3px solid #ec4899; &.entity-kpi-tile--active { box-shadow: 0 0 0 2px #ec4899; } }
+}
+
+.entity-kpi-count {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cat-text-primary);
+}
+
+.entity-kpi-label {
+  font-size: 0.72rem;
+  color: var(--cat-text-secondary);
+  margin-top: 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.parent-name-cell {
+  color: var(--cat-text-secondary);
+  font-size: 0.85em;
+}
+
+.location-cell {
+  color: var(--cat-text-secondary);
+  font-size: 0.85em;
+}
+
+.loc-sep {
+  opacity: 0.5;
+}
+
+.text-muted {
+  color: var(--cat-text-tertiary, #6b7280);
+}
+
+// ── Import dialog styles ───────────────────────────────────────────────────────
+.import-dropzone {
+  border: 2px dashed var(--cat-border-default);
+  border-radius: var(--cat-radius-md);
+  padding: 40px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-bottom: 16px;
+
+  &:hover, &--active {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+  }
+
+  .import-drop-icon { color: var(--cat-text-tertiary); margin-bottom: 12px; }
+  .import-drop-primary { font-weight: 600; margin: 0 0 4px; }
+  .import-drop-hint { font-size: 0.82rem; color: var(--cat-text-secondary); margin: 0; }
+}
+
+.import-format-guide {
+  margin-bottom: 16px;
+  :deep(.el-collapse-item__header) { font-size: 0.85rem; color: var(--cat-text-secondary); }
+}
+
+.import-format-tabs {
+  font-size: 0.83rem;
+  .fmt-label { font-weight: 600; margin: 0 0 4px; }
+  .fmt-code {
+    display: block;
+    background: var(--cat-bg-subtle);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-family: monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin-bottom: 6px;
+  }
+  .fmt-note { color: var(--cat-text-secondary); margin: 0; }
+  .mt-3 { margin-top: 12px; }
+}
+
+.import-preview {
+  margin-top: 8px;
+  .import-preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .import-preview-title { font-size: 0.85rem; font-weight: 600; }
+  .import-preview-more { font-size: 0.8rem; color: var(--cat-text-secondary); margin: 6px 0 0; }
+}
+
+.import-result-stats {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.import-error-list {
+  font-size: 0.82rem;
+  color: var(--el-color-warning);
+  padding-left: 18px;
+  margin: 0;
+  li { margin-bottom: 4px; }
 }
 
 .filter-section {

@@ -5,12 +5,14 @@
  * encryption key versions.
  */
 
+import { rekeyAllColumns } from '../utils/encrypted-columns.js';
+import { auditMutations } from '../utils/audit.js';
 import { Router } from 'express';
 import type { Response } from 'express';
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import type { AuthRequest } from '../middleware/auth.js';
-import { requireAuth, requirePermission } from '../middleware/auth.js';
+import { requireAuth, requirePermission, requireSession } from '../middleware/auth.js';
 import {
   encryptionService,
   rotateKeyVersion,
@@ -19,6 +21,7 @@ import {
 import { asyncHandler } from '../utils/route-helpers.js';
 
 const router = Router();
+router.use(auditMutations('encryption_key'));
 
 /**
  * GET /api/v1/admin/encryption/status
@@ -30,7 +33,7 @@ router.get(
   '/status',
   requireAuth,
   requirePermission('admin.encryption'),
-  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  asyncHandler(async (_req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
     const available = encryptionService.isAvailable();
     const activeVersion = encryptionService.getActiveKeyVersion();
@@ -91,7 +94,7 @@ router.get(
  */
 router.post(
   '/rotate',
-  requireAuth,
+  requireSession,
   requirePermission('admin.encryption'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     if (!encryptionService.isAvailable()) {
@@ -108,55 +111,7 @@ router.post(
     const newVersion = await rotateKeyVersion(db);
 
     // Re-wrap every encrypted-at-rest column under the new key version.
-    // The chat_integration.webhook_url was added to this iteration set
-    // when the column moved from plaintext to envelope encryption; rows
-    // written before that change pass through `isEncryptedEnvelope`
-    // inside `encryptionService.rekey` as a no-op so the upgrade is
-    // safe to run repeatedly.
-    let processed = 0;
-    let rekeyed = 0;
-
-    const webhookResult = await encryptionService.rekey(
-      async function* () {
-        const webhooks = await db
-          .selectFrom('webhook')
-          .select(['id', 'secret'])
-          .execute();
-        for (const wh of webhooks) {
-          yield { id: wh.id, value: wh.secret };
-        }
-      },
-      async (id, value) => {
-        await db
-          .updateTable('webhook')
-          .set({ secret: value, updated_at: new Date() })
-          .where('id', '=', id)
-          .execute();
-      },
-    );
-    processed += webhookResult.processed;
-    rekeyed += webhookResult.rekeyed;
-
-    const chatResult = await encryptionService.rekey(
-      async function* () {
-        const rows = await db
-          .selectFrom('chat_integration')
-          .select(['id', 'webhook_url'])
-          .execute();
-        for (const row of rows) {
-          yield { id: row.id, value: row.webhook_url };
-        }
-      },
-      async (id, value) => {
-        await db
-          .updateTable('chat_integration')
-          .set({ webhook_url: value, updated_at: new Date() })
-          .where('id', '=', id)
-          .execute();
-      },
-    );
-    processed += chatResult.processed;
-    rekeyed += chatResult.rekeyed;
+    const { processed, rekeyed, byTable } = await rekeyAllColumns(db, (read, write) => encryptionService.rekey(read, write));
 
     logger.info('Encryption key rotated', {
       oldVersion,
@@ -164,8 +119,10 @@ router.post(
       processed,
       rekeyed,
       breakdown: {
-        webhooks: webhookResult,
-        chatIntegrations: chatResult,
+        webhooks: byTable.webhook,
+        chatIntegrations: byTable.chat_integration,
+        platformSigningKeys: byTable.platform_signing_key,
+        userSignatures: byTable.user_signature,
       },
       userId: req.user!.id,
     });
@@ -177,8 +134,10 @@ router.post(
       processed,
       rekeyed,
       breakdown: {
-        webhooks: webhookResult,
-        chatIntegrations: chatResult,
+        webhooks: byTable.webhook,
+        chatIntegrations: byTable.chat_integration,
+        platformSigningKeys: byTable.platform_signing_key,
+        userSignatures: byTable.user_signature,
       },
     });
   })

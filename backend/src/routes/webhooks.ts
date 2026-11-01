@@ -5,6 +5,7 @@
  * and re-enabling webhook subscriptions, plus delivery log access.
  */
 
+import { auditMutations } from '../utils/audit.js';
 import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
@@ -12,14 +13,15 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import { getDatabase } from '../db/connection.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
-import { AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
+import { AuthRequest, requireAuth, requirePermission, requireSession } from '../middleware/auth.js';
 import { getEventBus } from '../events/index.js';
 import { CHANNEL_TEST } from '../events/catalog.js';
 import { validatePagination } from '../utils/pagination.js';
 import { encryptionService } from '../utils/encryption.js';
-import { isPrivateOrReservedUrl } from '../utils/url-safety.js';
+import { hostnameResolvesToPrivate, isPrivateOrReservedUrl } from '../utils/url-safety.js';
 
 const router = Router();
+router.use(auditMutations('webhook'));
 
 /**
  * Generate a cryptographically secure webhook secret.
@@ -29,10 +31,19 @@ function generateSecret(): string {
 }
 
 // Custom Zod refinement for safe webhook URLs
+const UNSAFE_WEBHOOK_URL = 'Webhook URL must use HTTPS and cannot target private, reserved, or internal network addresses';
+
 const safeWebhookUrl = z.string().url('URL must be a valid URL').refine(
   (url) => !isPrivateOrReservedUrl(url),
-  'Webhook URL must use HTTPS and cannot target private, reserved, or internal network addresses'
+  UNSAFE_WEBHOOK_URL
 );
+
+/** Refuses a URL whose hostname resolves inside the network; responds 400. */
+async function rejectInternalHost(url: string | undefined, res: Response): Promise<boolean> {
+  if (!url || !(await hostnameResolvesToPrivate(url))) return false;
+  res.status(400).json({ error: 'Invalid input', details: [{ path: ['url'], message: UNSAFE_WEBHOOK_URL }] });
+  return true;
+}
 
 interface WebhookUpdateInput {
   name?: string;
@@ -146,11 +157,12 @@ router.get(
  */
 router.post(
   '/',
-  requireAuth,
+  requireSession,
   requirePermission('admin.webhooks'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = createWebhookSchema.parse(req.body);
+      if (await rejectInternalHost(data.url, res)) return;
       const db = getDatabase();
 
       const id = uuidv4();
@@ -256,11 +268,12 @@ router.get(
  */
 router.put(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.webhooks'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = updateWebhookSchema.parse(req.body);
+      if (await rejectInternalHost(data.url, res)) return;
       const db = getDatabase();
 
       // buildWebhookResponse only needs the fields listed here; avoid
@@ -305,7 +318,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.webhooks'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -337,7 +350,7 @@ router.delete(
  */
 router.post(
   '/:id/test',
-  requireAuth,
+  requireSession,
   requirePermission('admin.webhooks'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -385,7 +398,7 @@ router.post(
  */
 router.post(
   '/:id/enable',
-  requireAuth,
+  requireSession,
   requirePermission('admin.webhooks'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -457,7 +470,12 @@ router.get(
     const deliveries = await db
       .selectFrom('webhook_delivery')
       .where('webhook_id', '=', req.params.id)
-      .selectAll()
+      // Never response_body: older rows may hold a target's response,
+      // which made SSRF readable (security review X1).
+      .select([
+        'id', 'webhook_id', 'event_id', 'event_type', 'status', 'http_status',
+        'attempt', 'next_retry_at', 'request_body', 'error_message', 'delivered_at', 'created_at',
+      ])
       .orderBy('created_at', 'desc')
       .offset(offset)
       .limit(limit)

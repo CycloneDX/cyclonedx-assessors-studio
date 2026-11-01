@@ -271,11 +271,12 @@ test.describe('Attestation lifecycle @regression', () => {
       }
     });
 
-    test('assessor can create an attestation', async ({ apiAs }) => {
+    test('assigned assessor can create an attestation', async ({ apiAs }) => {
       const adminApi = await apiAs('admin');
-      const { assessmentId } = await buildCompletedAssessment(adminApi);
-
       const assessorApi = await apiAs('assessor');
+      const me = await assessorApi.get('/api/v1/auth/me').then((r) => r.json());
+      const { assessmentId } = await buildCompletedAssessment(adminApi, { assessorIds: [me.user.id] });
+
       const r = await assessorApi.post('/api/v1/attestations', {
         data: { assessmentId, summary: 'Created by assessor' },
       });
@@ -322,17 +323,29 @@ test.describe('Attestation lifecycle @regression', () => {
       expect(r.ok()).toBeTruthy();
     });
 
-    test('all roles can list attestations', async ({ apiAs }) => {
-      for (const role of [
-        'admin',
-        'assessor',
-        'assessee',
-        'standards_manager',
-        'standards_approver',
-      ] as const) {
+    test('assessor cannot create an attestation on an assessment they are not assigned to (403)', async ({ apiAs }) => {
+      const adminApi = await apiAs('admin');
+      const { assessmentId } = await buildCompletedAssessment(adminApi);
+      const assessorApi = await apiAs('assessor');
+      const r = await assessorApi.post('/api/v1/attestations', {
+        data: { assessmentId, summary: 'Not assigned' },
+      });
+      expect(r.status()).toBe(403);
+    });
+
+    test('roles with attestations.view can list attestations', async ({ apiAs }) => {
+      for (const role of ['admin', 'assessor', 'assessee'] as const) {
         const api = await apiAs(role);
         const r = await api.get('/api/v1/attestations');
         expect(r.ok(), `${role} could not list /attestations`).toBeTruthy();
+      }
+    });
+
+    test('standards roles cannot list attestations (least privilege, 403)', async ({ apiAs }) => {
+      for (const role of ['standards_manager', 'standards_approver'] as const) {
+        const api = await apiAs(role);
+        const r = await api.get('/api/v1/attestations');
+        expect(r.status(), `${role} listed /attestations`).toBe(403);
       }
     });
   });

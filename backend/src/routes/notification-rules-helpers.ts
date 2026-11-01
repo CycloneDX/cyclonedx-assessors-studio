@@ -78,7 +78,7 @@ export const USER_VALID_EVENT_TYPES = [
   'affirmation.seal_ready',
   'affirmation.sealed',
   'affirmation.rescinded',
-  '*',
+  // No '*': a personal rule names the events it wants (security review Z10).
 ];
 
 /**

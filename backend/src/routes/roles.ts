@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { clampPagination } from '../utils/pagination.js';
+import { auditMutations } from '../utils/audit.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
@@ -6,10 +8,11 @@ import { getDatabase } from '../db/connection.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
 import { logger } from '../utils/logger.js';
 import type { AuthRequest } from '../middleware/auth.js';
-import { requireAuth, requirePermission } from '../middleware/auth.js';
+import { requireAuth, requirePermission, requireSession } from '../middleware/auth.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 
 const router = Router();
+router.use(auditMutations('role'));
 
 const createRoleSchema = z.object({
   key: z.string().min(1, 'Key is required'),
@@ -26,8 +29,8 @@ const updateRoleSchema = z.object({
 
 router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
-  const limit = Math.min(Number(req.query.limit) || 50, 100);
-  const offset = Number(req.query.offset) || 0;
+  // Clamped: negative/fractional values used to reach SQL and 500 (I8).
+  const { limit, offset } = clampPagination(req.query as Record<string, unknown>);
 
   const total = await db
     .selectFrom('role')
@@ -111,7 +114,7 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
 
 router.post(
   '/',
-  requireAuth,
+  requireSession,
   requirePermission('admin.roles'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -176,7 +179,7 @@ router.post(
 
 router.put(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.roles'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -264,7 +267,7 @@ router.put(
 
 router.delete(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.roles'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();

@@ -235,3 +235,14 @@ describe('Email Templates', () => {
     });
   });
 });
+
+describe('assessmentCreatedTemplate without a project', () => {
+  it('never prints "undefined" and links to the assessment', async () => {
+    const { assessmentCreatedTemplate } = await import('../../events/channels/email-templates.js');
+    const t = assessmentCreatedTemplate({ assessmentId: 'a1', assessmentTitle: 'Q4 review', projectName: null, actorName: 'Ana' }, 'https://hub.example');
+    for (const part of [t.subject, t.text, t.html]) expect(part).not.toMatch(/undefined|null/);
+    expect(t.subject).toBe('Assessment "Q4 review" created');
+    expect(t.text).toContain('https://hub.example/assessments/a1');
+  });
+});
+

@@ -77,7 +77,6 @@
 
         <el-form-item :label="t('apiKeys.expiresIn')">
           <el-select v-model="form.expiresInDays" :disabled="saving">
-            <el-option :label="t('apiKeys.never')" :value="0" />
             <el-option :label="t('apiKeys.days30')" :value="30" />
             <el-option :label="t('apiKeys.days90')" :value="90" />
             <el-option :label="t('apiKeys.days180')" :value="180" />
@@ -221,7 +220,8 @@ async function handleCreate() {
   try {
     const result = await createApiKey({
       name,
-      expiresInDays: form.value.expiresInDays > 0 ? form.value.expiresInDays : undefined,
+      // Keys always expire (server caps at 365 days).
+      expiresInDays: form.value.expiresInDays,
       userId: props.userId,
     })
     createdKey.value = result

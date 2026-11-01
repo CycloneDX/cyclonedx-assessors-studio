@@ -222,7 +222,7 @@ import { ref, computed, onMounted, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import RowActions from '@/components/shared/RowActions.vue'
 import SearchSelect from '@/components/shared/SearchSelect.vue'
@@ -337,7 +337,7 @@ async function fetchEntities() {
 async function fetchUsers() {
   usersLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/users')
+    const { data } = await client.get('/users')
     const rows = (data?.data ?? []) as Array<{
       id: string
       username: string

@@ -81,6 +81,7 @@ export async function refreshPermissionsFromServer(force = false): Promise<void>
 
 /**
  * Test helper. Production code should not use these.
+ * @internal Test seam; not part of the module API.
  */
 export function _resetPermissionRefreshStateForTests(): void {
   lastPermissionRefreshAt = 0
@@ -91,9 +92,16 @@ export function _resetPermissionRefreshStateForTests(): void {
   setupComplete = true
 }
 
+/** @internal Test seam; not part of the module API. */
 export function setPermissionRefreshIntervalForTests(ms: number): void {
   permissionRefreshIntervalMs = ms
 }
+
+// Object ids are UUIDs. Constraining the parameter means route.params can
+// never carry '/', '..', '?' or '#': Vue Router decodes %2F, so an
+// unconstrained /evidence/:id link could steer the view's API calls to a
+// different endpoint with the user's session (client-side path traversal).
+const UUID = '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})'
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -106,6 +114,18 @@ const routes: Array<RouteRecordRaw> = [
     path: '/login',
     name: 'Login',
     component: () => import('@/views/LoginView.vue'),
+    meta: { public: true }
+  },
+  {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/PasswordResetView.vue'),
+    meta: { public: true }
+  },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/PasswordResetView.vue'),
     meta: { public: true }
   },
   {
@@ -126,22 +146,28 @@ const routes: Array<RouteRecordRaw> = [
     path: '/projects',
     name: 'Projects',
     component: () => import('@/views/ProjectsView.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresPermission: 'projects.view' }
   },
   {
-    path: '/projects/:id',
+    path: `/projects/:id${UUID}`,
     name: 'ProjectDetail',
     component: () => import('@/views/ProjectDetailView.vue'),
     meta: { requiresAuth: true }
   },
   {
+    path: '/schedule',
+    name: 'Scheduler',
+    component: () => import('@/views/SchedulerView.vue'),
+    meta: { requiresAuth: true, requiresPermission: 'assessments.view' }
+  },
+  {
     path: '/entities',
     name: 'Entities',
     component: () => import('@/views/EntitiesView.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresPermission: 'entities.view' }
   },
   {
-    path: '/entities/:id',
+    path: `/entities/:id${UUID}`,
     name: 'EntityDetail',
     component: () => import('@/views/EntityDetailView.vue'),
     meta: { requiresAuth: true }
@@ -153,7 +179,7 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/standards/:id',
+    path: `/standards/:id${UUID}`,
     name: 'StandardDetail',
     component: () => import('@/views/StandardDetailView.vue'),
     meta: { requiresAuth: true }
@@ -162,16 +188,28 @@ const routes: Array<RouteRecordRaw> = [
     path: '/assessments',
     name: 'Assessments',
     component: () => import('@/views/AssessmentsView.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresPermission: 'assessments.view' }
   },
   {
-    path: '/assessments/:id',
+    path: `/assessments/:id${UUID}`,
     name: 'AssessmentDetail',
     component: () => import('@/views/AssessmentDetailView.vue'),
     meta: { requiresAuth: true }
   },
   {
-    path: '/assessments/:id/declarations',
+    path: `/assessments/:id${UUID}/setup`,
+    name: 'TargetedAssessmentSetup',
+    component: () => import('@/views/TargetedAssessmentSetupView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: `/assessments/:id${UUID}/requirements/:requirementId${UUID}`,
+    name: 'RequirementDetail',
+    component: () => import('@/views/RequirementDetailView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: `/assessments/:id${UUID}/declarations`,
     name: 'Declarations',
     component: () => import('@/views/DeclarationsView.vue'),
     meta: { requiresAuth: true }
@@ -180,10 +218,10 @@ const routes: Array<RouteRecordRaw> = [
     path: '/evidence',
     name: 'Evidence',
     component: () => import('@/views/EvidenceView.vue'),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, requiresPermission: 'evidence.view' }
   },
   {
-    path: '/evidence/:id',
+    path: `/evidence/:id${UUID}`,
     name: 'EvidenceDetail',
     component: () => import('@/views/EvidenceDetailView.vue'),
     meta: { requiresAuth: true }
@@ -192,6 +230,30 @@ const routes: Array<RouteRecordRaw> = [
     path: '/attestations',
     name: 'Attestations',
     component: () => import('@/views/AttestationsView.vue'),
+    meta: { requiresAuth: true, requiresPermission: 'attestations.view' }
+  },
+  {
+    path: '/mitigations',
+    name: 'Mitigations',
+    component: () => import('@/views/MitigationsView.vue'),
+    meta: { requiresAuth: true, requiresPermission: 'claims.view' }
+  },
+  {
+    path: `/mitigations/:id${UUID}`,
+    name: 'MitigationDetail',
+    component: () => import('@/views/MitigationDetailView.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/claims',
+    name: 'Claims',
+    component: () => import('@/views/ClaimsView.vue'),
+    meta: { requiresAuth: true, requiresPermission: 'claims.view' }
+  },
+  {
+    path: `/claims/:id${UUID}`,
+    name: 'ClaimDetail',
+    component: () => import('@/views/ClaimDetailView.vue'),
     meta: { requiresAuth: true }
   },
   {
@@ -273,10 +335,22 @@ const routes: Array<RouteRecordRaw> = [
     meta: { requiresAuth: true, requiresPermission: 'admin.tags' }
   },
   {
+    path: '/admin/trash',
+    name: 'Trash',
+    component: () => import('@/views/TrashView.vue'),
+    meta: { requiresAuth: true, requiresAnyPermission: ['assessments.manage', 'evidence.delete', 'claims.edit'] }
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/SettingsView.vue'),
     meta: { requiresAuth: true }
+  },
+  // Unknown paths (including ids that are not UUIDs) go to the dashboard;
+  // the guard sends signed-out users on to the login page.
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/dashboard'
   }
 ]
 

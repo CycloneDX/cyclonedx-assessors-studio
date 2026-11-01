@@ -29,7 +29,7 @@ const FORMULA_TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r'])
  * whole value is wrapped in double quotes so commas, newlines, and
  * quotes inside the field do not corrupt the row.
  */
-export function sanitizeCsvField(value: unknown): string {
+function sanitizeCsvField(value: unknown): string {
   if (value === null || value === undefined) {
     return '""'
   }
@@ -95,7 +95,7 @@ export function downloadCsv(filename: string, csv: string): void {
  * Strip path separators, control characters, and leading dots so an
  * attacker-controlled record cannot shape the suggested file name.
  */
-export function sanitizeFilename(name: string): string {
+function sanitizeFilename(name: string): string {
   const cleaned = name
     // biome-ignore lint/suspicious/noControlCharactersInRegex: the intent here is to strip control characters
     .replace(/[\u0000-\u001f\u007f]/g, '')

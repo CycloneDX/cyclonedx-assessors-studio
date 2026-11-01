@@ -23,10 +23,25 @@ vi.mock('vue-i18n', () => ({
   }))
 }))
 
-// Mock axios
+// Mock axios (the shared client is built from it via axios.create). The
+// dashboard widgets render /dashboard/claims-mitigations
+// fields directly, so that URL needs a payload of the real shape.
 vi.mock('axios', () => {
+  const claimsMitigations = {
+    claims: { total: 0, counterClaims: 0, byStatus: { draft: 0, underReview: 0, accepted: 0, rejected: 0 } },
+    mitigations: {
+      total: 0,
+      byStatus: { proposed: 0, inProgress: 0, implemented: 0, verified: 0, closed: 0 },
+      openByPriority: { critical: 0, high: 0, medium: 0, low: 0 },
+    },
+    evidence: { inReview: 0, inProgress: 0, claimed: 0, expired: 0 },
+    requirements: { attestations: 0, attested: 0, claimed: 0, mitigated: 0 },
+    attention: { claimsUnderReview: [], evidenceUnderReview: [], counterClaims: [], overdueMitigations: [] },
+  }
   const mockAxiosInstance = {
-    get: vi.fn().mockResolvedValue({ data: { data: [] } }),
+    get: vi.fn((url: string) => Promise.resolve(
+      url === '/dashboard/claims-mitigations' ? { data: claimsMitigations } : { data: { data: [] } },
+    )),
     post: vi.fn().mockResolvedValue({ data: {} }),
     put: vi.fn().mockResolvedValue({ data: {} }),
     delete: vi.fn().mockResolvedValue({ data: {} }),

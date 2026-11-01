@@ -1,5 +1,5 @@
 import { Kysely, PostgresDialect } from 'kysely';
-import { KyselyPGlite } from 'kysely-pglite';
+import { pgliteDialect } from './pglite-dialect.js';
 import { Pool } from 'pg';
 import fs from 'node:fs';
 import { getConfig } from '../config/index.js';
@@ -32,10 +32,8 @@ export async function initializeDatabase(): Promise<Kysely<Database>> {
         dataDir: config.PGLITE_DATA_DIR,
       });
 
-      const pgliteWrapper = new KyselyPGlite(pglite);
-
       db = new Kysely<Database>({
-        dialect: pgliteWrapper.dialect,
+        dialect: pgliteDialect(pglite),
         plugins: [new AuditLogAppendOnlyPlugin()],
       });
     } else {

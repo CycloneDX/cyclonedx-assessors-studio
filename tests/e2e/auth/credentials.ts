@@ -2,12 +2,12 @@
  * Centralized E2E credentials.
  *
  * The admin user is provisioned via the in-browser setup wizard in
- * global-setup.ts. Demo users are seeded via /api/v1/setup/seed-demo,
- * which loads backend/src/db/demo-data.json. The seed file uses one
- * known password (`DemoPass123!`) for every demo user.
+ * global-setup.ts. Demo users come from backend/src/db/demo-data.json via
+ * /api/v1/setup/seed-demo. They can only sign in because global-setup
+ * passes `demoUserPassword: DEMO_PASSWORD`; without it the backend gives
+ * them an unusable password (the one in demo-data.json is never used).
  *
- * If demo-data.json is edited, update both the password constant and
- * the username list. The role keys must stay in lockstep with
+ * If demo-data.json is edited, update the username list. The role keys must stay in lockstep with
  * backend/src/utils/roles.ts.
  */
 

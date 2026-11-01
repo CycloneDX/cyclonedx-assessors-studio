@@ -233,3 +233,41 @@ export async function loginAs(role: 'admin' | 'assessor' | 'assessee'): Promise<
 
   return agent;
 }
+
+export type PersonaRole = 'admin' | 'assessor' | 'assessee' | 'standards_manager' | 'standards_approver';
+
+/**
+ * Creates an extra user with the given role and returns a logged-in agent.
+ * Use for authorization tests that need more personas than the shared
+ * admin/assessor/assessee trio (outsiders, standards roles, etc.).
+ */
+export async function createPersona(role: PersonaRole, label = role): Promise<{
+  id: string;
+  username: string;
+  password: string;
+  agent: ReturnType<typeof supertest.agent>;
+}> {
+  const { getDatabase } = await import('../../db/connection.js');
+  const { hashPassword } = await import('../../utils/crypto.js');
+  const db = getDatabase();
+  const id = uuidv4();
+  const username = `${label}_${id.slice(0, 8)}`;
+  const password = 'Password123!';
+  const roleRow = await db.selectFrom('role').select('id').where('key', '=', role).executeTakeFirst();
+  await db.insertInto('app_user').values({
+    id,
+    username,
+    email: `${username}@test.local`,
+    password_hash: await hashPassword(password),
+    display_name: label,
+    role,
+    role_id: roleRow?.id ?? null,
+    is_active: true,
+  }).execute();
+  const agent = supertest.agent(baseUrl);
+  const res = await agent.post('/api/v1/auth/login').send({ username, password });
+  if (res.status !== 200 && res.status !== 201) {
+    throw new Error(`Login failed for persona ${username}: ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  return { id, username, password, agent };
+}

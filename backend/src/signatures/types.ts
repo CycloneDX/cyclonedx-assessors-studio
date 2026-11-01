@@ -180,7 +180,7 @@ export interface SignatureProvider {
    */
   canonicalize(
     payload: JsonObject,
-    signer: { algorithm: string; excludes?: string[]; signatureProperty?: string },
+    signer: { algorithm: string; excludes?: string[]; signatureProperty?: string; publicKey?: JsonObject },
   ): CanonicalizedPayload;
 
   /**

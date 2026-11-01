@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { queryString, likeContains } from '../utils/query.js';
+import { contentDisposition } from '../utils/content-disposition.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
@@ -11,7 +13,7 @@ import { logger } from '../utils/logger.js';
 import { AuthRequest, requireAuth, requirePermission, getPermissionsForRole } from '../middleware/auth.js';
 import { syncEntityTags, fetchTagsForEntities } from '../utils/tags.js';
 import { logAudit } from '../utils/audit.js';
-import { EVIDENCE_STATE_CHANGED } from '../events/catalog.js';
+import { EVIDENCE_CREATED, EVIDENCE_STATE_CHANGED } from '../events/catalog.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { validatePagination } from '../utils/pagination.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
@@ -31,21 +33,23 @@ const router = Router();
  * Check if a user is a participant (assessor or assessee) in an assessment,
  * or bears a permission that grants assessment-wide visibility.
  *
- * Access is granted when any of the following holds:
- *   1. The caller holds `evidence.view_all` or `assessments.view_all`.
+ * This is a WRITE-path gate (attachment create/delete). Access is granted when:
+ *   1. The caller holds `admin.settings` (administrative override).
  *   2. The caller is listed on assessment_assessor for the assessment.
  *   3. The caller is listed on assessment_assessee for the assessment.
  *
- * Prior revisions short-circuited on a literal role-name check for
- * `admin`. That matched the intent only because the admin role seeds with
- * every permission, but it created a role-name dependency that drifts
- * from the RBAC tables and violates the project rule of permission-only
- * access control. The check below consults the DB-driven permission set
- * for the caller's role instead.
+ * It deliberately does NOT grant on the `*.view_all` read scopes. Assessors
+ * hold view_all so they can SEE all data, but their writes stay scoped to the
+ * assessments they participate in — "read all" must not imply "write all". Only
+ * a genuine administrator (admin.settings) gets a blanket write override.
+ *
+ * Prior revisions short-circuited on a literal role-name check for `admin`;
+ * this consults the DB-driven permission set instead, per the permission-only
+ * access-control rule.
  */
 async function isAssessmentParticipant(db: Kysely<Database>, userId: string, userRole: string, assessmentId: string): Promise<boolean> {
   const perms = await getPermissionsForRole(userRole);
-  if (perms.includes('evidence.view_all') || perms.includes('assessments.view_all')) return true;
+  if (perms.includes('admin.settings')) return true;
 
   const assessor = await db
     .selectFrom('assessment_assessor')
@@ -105,34 +109,71 @@ async function getEvidenceIfAccessible(
     return evidence;
   }
 
+  // Least-privilege (author-or-reviewer): a caller without a view_all scope
+  // may only see evidence they authored or were assigned to review. Assessors
+  // and admins hold a view_all permission and are handled above; assessees are
+  // the only remaining role with evidence.view, so this restricts them to
+  // their own (and to-review) evidence. Participation in an assessment no
+  // longer grants visibility of another user's evidence.
   if (evidence.author_id === userId) return evidence;
   if (evidence.reviewer_id === userId) return evidence;
 
-  const participantRow = await db
+  return null;
+}
+
+/**
+ * Check whether a user may WRITE a specific evidence record's attachments
+ * (create/delete). The write analogue of getEvidenceIfAccessible, it
+ * deliberately does NOT grant on the `*.view_all` read scopes — "read all must
+ * not imply write all" (see isAssessmentParticipant). This closes the F02 BOLA
+ * write path where a bare view-all holder (e.g. an assessor with no link to the
+ * evidence) could create/delete attachments on records they have no
+ * relationship to.
+ *
+ * Write access is granted when any of the following holds:
+ *   1. The caller holds `admin.settings` (administrative override).
+ *   2. The caller authored the evidence.
+ *   3. The caller is the assigned reviewer of the evidence.
+ *   4. The caller is an assessor/assessee on an assessment this evidence is
+ *      linked to (via assessment_requirement_evidence).
+ *
+ * Returns the evidence row on success for caller reuse, or null when the
+ * evidence does not exist or the caller is not authorized (callers map null to
+ * a 404 so existence is not leaked).
+ */
+async function getEvidenceIfWritable(
+  db: Kysely<Database>,
+  userId: string,
+  userRole: string,
+  evidenceId: string,
+): Promise<Record<string, unknown> | null> {
+  const evidence = await fetchEvidence(db, evidenceId);
+  if (!evidence) return null;
+
+  const perms = await getPermissionsForRole(userRole);
+  if (perms.includes('admin.settings')) return evidence;
+  if (evidence.author_id === userId) return evidence;
+  if (evidence.reviewer_id === userId) return evidence;
+
+  // Participant on a linked assessment. view_all is intentionally NOT
+  // sufficient here (F02 BOLA): read-all does not imply write-all.
+  const participant = await db
     .selectFrom('assessment_requirement_evidence as are')
     .innerJoin('assessment_requirement as ar', 'ar.id', 'are.assessment_requirement_id')
-    .leftJoin('assessment_assessor as assessor', (join) =>
-      join
-        .onRef('assessor.assessment_id', '=', 'ar.assessment_id')
-        .on('assessor.user_id', '=', userId),
-    )
-    .leftJoin('assessment_assessee as assessee', (join) =>
-      join
-        .onRef('assessee.assessment_id', '=', 'ar.assessment_id')
-        .on('assessee.user_id', '=', userId),
-    )
     .where('are.evidence_id', '=', evidenceId)
     .where((eb) =>
       eb.or([
-        eb('assessor.user_id', 'is not', null),
-        eb('assessee.user_id', 'is not', null),
-      ]),
+        eb('ar.assessment_id', 'in',
+          eb.selectFrom('assessment_assessor').select('assessment_id').where('user_id', '=', userId)),
+        eb('ar.assessment_id', 'in',
+          eb.selectFrom('assessment_assessee').select('assessment_id').where('user_id', '=', userId)),
+      ])
     )
-    .select('ar.assessment_id')
-    .limit(1)
+    .select('are.evidence_id')
     .executeTakeFirst();
+  if (participant) return evidence;
 
-  return participantRow ? evidence : null;
+  return null;
 }
 
 /**
@@ -292,7 +333,7 @@ async function validateEvidenceSubmission(
 function validateEvidenceApproval(
   evidence: Record<string, unknown> | undefined,
   userId: string,
-  hasReviewAccess: boolean,
+  isAdmin: boolean,
 ): { valid: boolean; error?: string; status?: 404 | 409 | 403 } {
   if (!evidence) {
     return { valid: false, error: 'Evidence not found', status: 404 };
@@ -300,7 +341,10 @@ function validateEvidenceApproval(
   if (evidence.state !== 'in_review') {
     return { valid: false, error: 'Evidence must be in review status to approve', status: 409 };
   }
-  if (!hasReviewAccess && evidence.reviewer_id !== userId) {
+  // The route already requires evidence.review, which every assessor holds,
+  // so that permission cannot stand in for the assignment: only the
+  // assigned reviewer or an administrator may decide.
+  if (!isAdmin && evidence.reviewer_id !== userId) {
     return { valid: false, error: 'Only the assigned reviewer or an admin can approve evidence', status: 403 };
   }
   if (evidence.author_id === userId) {
@@ -313,30 +357,50 @@ function validateEvidenceApproval(
 const createEvidenceSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   description: z.string().optional(),
-  state: z.enum(['in_review', 'in_progress', 'claimed', 'expired']).default('in_progress'),
+  evidenceNotes: z.string().nullable().optional(),
+  // 'claimed' (approved) is only reachable through POST /:id/approve, which
+  // enforces review and "authors cannot approve their own evidence"
+  // (security review Z11). 'in_review' only through POST /:id/submit-for-review,
+  // which validates the reviewer and notifies them.
+  state: z.enum(['in_progress', 'expired']).default('in_progress'),
   expiresOn: z.string().nullable().optional(),
   isCounterEvidence: z.boolean().default(false),
+  type: z.enum(['proof', 'counter_evidence', 'mitigation_strategy']).nullable().optional(),
+  owner: z.string().nullable().optional(),
+  reviewerId: z.string().uuid('Invalid reviewer ID').nullable().optional(),
   classification: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
+  geoLatitude: z.number().nullable().optional(),
+  geoLongitude: z.number().nullable().optional(),
+  geoLabel: z.string().nullable().optional(),
 });
 
 const addNoteSchema = z.object({
   content: z.string().min(1, 'Note content is required'),
 });
 
-router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/', requireAuth, requirePermission('evidence.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
   const { limit, offset } = validatePagination(req.query);
-  const state = req.query.state as string | undefined;
-  const assessmentId = req.query.assessmentId as string | undefined;
-  const requirementId = req.query.requirementId as string | undefined;
-  const search = req.query.search as string | undefined;
+  const state = queryString(req.query.state);
+  const assessmentId = queryString(req.query.assessmentId);
+  const requirementId = queryString(req.query.requirementId);
+  const search = queryString(req.query.search);
+
+  // Row-visibility scope. A caller without a view_all permission (i.e. an
+  // assessee) sees only evidence they authored or were assigned to review;
+  // assessors and admins hold view_all and see everything. The same predicate
+  // is mirrored into the count query below so pagination totals match.
+  const userPerms = req.user?.id ? await getPermissionsForRole(req.user.role) : [];
+  const evidenceViewAll = userPerms.includes('evidence.view_all') || userPerms.includes('assessments.view_all');
+  const scopeUserId = req.user?.id ?? '';
 
   let query = db.selectFrom('evidence')
     .leftJoin('app_user as author', (join) => join.onRef('author.id', '=', 'evidence.author_id'))
     .leftJoin('app_user as reviewer', (join) => join.onRef('reviewer.id', '=', 'evidence.reviewer_id'))
     .select((eb) => [
       'evidence.id',
+      'evidence.display_id',
       'evidence.bom_ref',
       'evidence.name',
       'evidence.property_name',
@@ -347,6 +411,11 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
       'evidence.expires_on',
       'evidence.is_counter_evidence',
       'evidence.classification',
+      'evidence.owner',
+      'evidence.type',
+      'evidence.geo_latitude',
+      'evidence.geo_longitude',
+      'evidence.geo_label',
       'evidence.created_at',
       'evidence.updated_at',
       'author.display_name as author_name',
@@ -355,6 +424,13 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
         .whereRef('assessment_requirement_evidence.evidence_id', '=', 'evidence.id')
         .select(eb.fn.countAll().as('count'))
         .as('assessment_count'),
+      sql<number>`(SELECT COUNT(*) FROM (
+        SELECT claim_id FROM claim_evidence WHERE evidence_id = evidence.id
+        UNION
+        SELECT claim_id FROM claim_counter_evidence WHERE evidence_id = evidence.id
+        UNION
+        SELECT claim_id FROM claim_mitigation_strategy WHERE evidence_id = evidence.id
+      ) AS _claims)`.as('claims_count'),
     ]);
 
   if (state) {
@@ -367,8 +443,18 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   if (search) {
     query = query.where((eb) =>
       eb.or([
-        eb('evidence.name', 'ilike', `%${search}%`),
-        eb('evidence.description', 'ilike', `%${search}%`),
+        eb('evidence.name', 'ilike', likeContains(search)),
+        eb('evidence.description', 'ilike', likeContains(search)),
+        sql<boolean>`evidence.display_id::text ilike ${likeContains(search.replace(/^EVD-?/i, ''))}`,
+      ]),
+    );
+  }
+
+  if (!evidenceViewAll) {
+    query = query.where((eb) =>
+      eb.or([
+        eb('evidence.author_id', '=', scopeUserId),
+        eb('evidence.reviewer_id', '=', scopeUserId),
       ]),
     );
   }
@@ -399,8 +485,8 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   if (search) {
     countWithFilters = countWithFilters.where((eb) =>
       eb.or([
-        eb('name', 'ilike', `%${search}%`),
-        eb('description', 'ilike', `%${search}%`),
+        eb('name', 'ilike', likeContains(search)),
+        eb('description', 'ilike', likeContains(search)),
       ]),
     );
   }
@@ -418,6 +504,15 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
     if (requirementId) {
       countWithFilters = countWithFilters.where(sql`assessment_requirement.requirement_id`, '=', requirementId);
     }
+  }
+
+  if (!evidenceViewAll) {
+    countWithFilters = countWithFilters.where((eb) =>
+      eb.or([
+        eb('author_id', '=', scopeUserId),
+        eb('reviewer_id', '=', scopeUserId),
+      ]),
+    );
   }
 
   const total = await countWithFilters.executeTakeFirstOrThrow().then(r => r.count);
@@ -473,6 +568,7 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
     .where('evidence.id', '=', req.params.id)
     .select([
       'evidence.id',
+      'evidence.display_id',
       'evidence.bom_ref',
       'evidence.name',
       'evidence.property_name',
@@ -483,6 +579,12 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
       'evidence.expires_on',
       'evidence.is_counter_evidence',
       'evidence.classification',
+      'evidence.owner',
+      'evidence.type',
+      'evidence.evidence_notes',
+      'evidence.geo_latitude',
+      'evidence.geo_longitude',
+      'evidence.geo_label',
       'evidence.created_at',
       'evidence.updated_at',
       'author.display_name as author_name',
@@ -658,11 +760,18 @@ router.post('/', requireAuth, requirePermission('evidence.create'), asyncHandler
         id: evidenceId,
         name: data.name,
         description: data.description,
+        evidenceNotes: data.evidenceNotes,
         state: data.state,
         authorId: req.user.id,
+        reviewerId: data.reviewerId,
         expiresOn: data.expiresOn ? new Date(data.expiresOn) : undefined,
         isCounterEvidence: data.isCounterEvidence,
+        type: data.type,
+        owner: data.owner,
         classification: data.classification,
+        geoLatitude: data.geoLatitude ?? undefined,
+        geoLongitude: data.geoLongitude ?? undefined,
+        geoLabel: data.geoLabel ?? undefined,
       }))
       .execute();
 
@@ -689,6 +798,12 @@ router.post('/', requireAuth, requirePermission('evidence.create'), asyncHandler
       requestId: req.requestId,
     });
 
+    req.eventBus?.emit(
+      EVIDENCE_CREATED,
+      { evidenceId, evidenceName: data.name, authorId: req.user.id, submittedBy: req.user.displayName },
+      { userId: req.user.id, displayName: req.user.displayName },
+    );
+
     res.status(201).json({
       id: evidenceId,
       name: data.name,
@@ -710,11 +825,19 @@ router.post('/', requireAuth, requirePermission('evidence.create'), asyncHandler
 const updateEvidenceSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
-  state: z.enum(['in_review', 'in_progress', 'claimed', 'expired', 'approved']).optional(),
+  evidenceNotes: z.string().nullable().optional(),
+  // No 'claimed'/'approved' here: approval goes through POST /:id/approve (Z11).
+  // No 'in_review' either: review starts with POST /:id/submit-for-review.
+  state: z.enum(['in_progress', 'expired']).optional(),
   expiresOn: z.string().nullable().optional(),
   classification: z.string().nullable().optional(),
   reviewerId: z.string().uuid().nullable().optional(),
+  type: z.enum(['proof', 'counter_evidence', 'mitigation_strategy']).nullable().optional(),
+  owner: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
+  geoLatitude: z.number().nullable().optional(),
+  geoLongitude: z.number().nullable().optional(),
+  geoLabel: z.string().nullable().optional(),
 });
 
 router.put('/:id', requireAuth, requirePermission('evidence.edit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
@@ -722,11 +845,12 @@ router.put('/:id', requireAuth, requirePermission('evidence.edit'), asyncHandler
     const data = updateEvidenceSchema.parse(req.body);
     const db = getDatabase();
 
-    const evidence = await db
-      .selectFrom('evidence')
-      .where('id', '=', req.params.id as string)
-      .selectAll()
-      .executeTakeFirst();
+    // Write gate, not the read gate: view_all lets an assessor see any
+    // evidence, not edit it (security review Z11, same rule as F02).
+    const writable = await getEvidenceIfWritable(db, req.user!.id, req.user!.role, req.params.id as string);
+    const evidence = writable
+      ? await db.selectFrom('evidence').where('id', '=', req.params.id as string).selectAll().executeTakeFirst()
+      : undefined;
 
     if (!evidence) {
       res.status(404).json({ error: 'Evidence not found' });
@@ -740,13 +864,26 @@ router.put('/:id', requireAuth, requirePermission('evidence.edit'), asyncHandler
     // policy, so 409 is returned instead of 403.
     if (await rejectIfImmutable(db, req.params.id as string, res)) return;
 
+    // Evidence under review leaves review only through approve or reject,
+    // so the reviewer's decision (and the rejection note) is never skipped.
+    if (evidence.state === 'in_review' && data.state !== undefined) {
+      res.status(409).json({ error: 'Evidence is in review: the reviewer approves or rejects it' });
+      return;
+    }
+
     const updateData: Record<string, unknown> = {};
     if (data.name !== undefined) updateData.name = data.name;
     if (data.description !== undefined) updateData.description = data.description;
+    if (data.evidenceNotes !== undefined) updateData.evidenceNotes = data.evidenceNotes;
     if (data.state !== undefined) updateData.state = data.state;
     if (data.expiresOn !== undefined) updateData.expiresOn = data.expiresOn ? new Date(data.expiresOn) : null;
     if (data.classification !== undefined) updateData.classification = data.classification;
     if (data.reviewerId !== undefined) updateData.reviewerId = data.reviewerId;
+    if (data.type !== undefined) updateData.type = data.type;
+    if (data.owner !== undefined) updateData.owner = data.owner;
+    if (data.geoLatitude !== undefined) updateData.geoLatitude = data.geoLatitude;
+    if (data.geoLongitude !== undefined) updateData.geoLongitude = data.geoLongitude;
+    if (data.geoLabel !== undefined) updateData.geoLabel = data.geoLabel;
 
     if (Object.keys(updateData).length > 0) {
       await db
@@ -824,8 +961,11 @@ router.delete(
 
     if (await rejectIfImmutable(db, req.params.id as string, res)) return;
 
+    // Soft delete: `evidence` is a view hiding deleted rows; the physical row
+    // stays in evidence_raw for restore. Purge removes it permanently.
     await db
-      .deleteFrom('evidence')
+      .updateTable('evidence')
+      .set({ deleted_at: new Date() })
       .where('id', '=', req.params.id as string)
       .execute();
 
@@ -846,6 +986,40 @@ router.delete(
   }),
 );
 
+// Restore a soft-deleted evidence record. Targets evidence_raw because the
+// evidence view hides deleted rows.
+router.post(
+  '/:id/restore',
+  requireAuth,
+  requirePermission('evidence.delete'),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    const db = getDatabase();
+    const row = await db
+      .selectFrom('evidence_raw')
+      .select(['id', 'deleted_at'])
+      .where('id', '=', req.params.id as string)
+      .executeTakeFirst();
+
+    if (!row) {
+      res.status(404).json({ error: 'Evidence not found' });
+      return;
+    }
+    if (!row.deleted_at) {
+      res.status(409).json({ error: 'Evidence is not deleted' });
+      return;
+    }
+
+    await db
+      .updateTable('evidence_raw')
+      .set({ deleted_at: null })
+      .where('id', '=', req.params.id as string)
+      .execute();
+
+    logger.info('Evidence restored', { evidenceId: req.params.id, requestId: req.requestId });
+    res.json({ message: 'Evidence restored' });
+  }),
+);
+
 router.post(
   '/:id/notes',
   requireAuth,
@@ -860,11 +1034,8 @@ router.post(
       const data = addNoteSchema.parse(req.body);
       const db = getDatabase();
 
-      const evidence = await db
-        .selectFrom('evidence')
-        .where('id', '=', req.params.id as string)
-        .selectAll()
-        .executeTakeFirst();
+      // Notes change the record: write gate, not view_all (security review Z11).
+      const evidence = await getEvidenceIfWritable(db, req.user.id, req.user.role, req.params.id as string);
 
       if (!evidence) {
         res.status(404).json({ error: 'Evidence not found' });
@@ -1086,10 +1257,12 @@ router.post(
         return;
       }
 
+      // Only the author (or an admin) submits evidence; holding
+      // evidence.submit used to let any assessee submit anyone's evidence
+      // and pick its reviewer (security review Z11).
       const userPermissions = await getPermissionsForRole(req.user.role);
-      const hasSubmitAccess = userPermissions.includes('evidence.submit');
-
-      if (!hasSubmitAccess && evidence.author_id !== req.user.id) {
+      const isAdmin = userPermissions.includes('admin.settings');
+      if (evidence.author_id !== req.user.id && !isAdmin) {
         res.status(403).json({ error: 'Only the evidence author or an admin can submit evidence for review' });
         return;
       }
@@ -1191,9 +1364,9 @@ router.post(
 
     const evidence = await fetchEvidence(db, req.params.id as string);
     const userPermissions = await getPermissionsForRole(req.user.role);
-    const hasReviewAccess = userPermissions.includes('evidence.review');
+    const isAdmin = userPermissions.includes('admin.settings');
 
-    const validation = validateEvidenceApproval(evidence, req.user.id, hasReviewAccess);
+    const validation = validateEvidenceApproval(evidence, req.user.id, isAdmin);
     if (!validation.valid) {
       res.status(validation.status ?? 409).json({ error: validation.error });
       return;
@@ -1281,14 +1454,16 @@ router.post(
       }
 
       const userPermissions = await getPermissionsForRole(req.user.role);
-      const hasReviewAccess = userPermissions.includes('evidence.review');
+      // evidence.review is required by the route itself, so it cannot be
+      // what lets a caller reject someone else's assignment.
+      const isAdmin = userPermissions.includes('admin.settings');
 
       if (evidence.state !== 'in_review') {
         res.status(409).json({ error: 'Evidence must be in review status to reject' });
         return;
       }
 
-      if (!hasReviewAccess && evidence.reviewer_id !== req.user.id) {
+      if (!isAdmin && evidence.reviewer_id !== req.user.id) {
         res.status(403).json({ error: 'Only the assigned reviewer or an admin can reject evidence' });
         return;
       }
@@ -1373,8 +1548,13 @@ router.post(
   })
 );
 
+// evidence_attachment.filename is VARCHAR(255)
+const MAX_ATTACHMENT_FILENAME = 255;
+// Upper bound on files in one multipart request; each file is buffered.
+const MAX_ATTACHMENTS_PER_UPLOAD = 10;
+
 const createAttachmentSchema = z.object({
-  filename: z.string().min(1, 'Filename is required'),
+  filename: z.string().min(1, 'Filename is required').max(MAX_ATTACHMENT_FILENAME),
   contentType: z.string().min(1, 'Content type is required'),
   binaryContent: z.string().min(1, 'Binary content is required'),
 });
@@ -1382,6 +1562,60 @@ const createAttachmentSchema = z.object({
 // Helper function to compute SHA-256 hash of buffer
 function computeContentHash(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+interface AttachmentInput {
+  filename: string;
+  contentType: string;
+  buffer: Buffer;
+}
+
+/**
+ * Stores one attachment. The storage key is built from ids only (the
+ * client filename lives in the row), and the row is inserted before the
+ * object-store write so a failed write never leaves an orphaned object:
+ * on failure the row is removed and the error rethrown.
+ */
+async function persistAttachment(
+  db: Kysely<Database>,
+  storageProvider: ReturnType<typeof getStorageProvider>,
+  storageProviderName: StorageProviderName,
+  evidenceId: string,
+  input: AttachmentInput,
+): Promise<Record<string, unknown>> {
+  const attachmentId = uuidv4();
+  const storageKey = `evidence/${evidenceId}/${attachmentId}`;
+  const contentHash = computeContentHash(input.buffer);
+  const row: Record<string, unknown> = {
+    id: attachmentId,
+    evidenceId,
+    filename: input.filename,
+    contentType: input.contentType,
+    sizeBytes: input.buffer.length,
+    contentHash,
+    storageProvider: storageProviderName,
+    storagePath: storageKey,
+    binaryContent: storageProviderName === 'database' ? input.buffer : null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+  await db.insertInto('evidence_attachment').values(toSnakeCase(row)).execute();
+  if (storageProviderName !== 'database') {
+    try {
+      await storageProvider.put(storageKey, input.buffer, { contentType: input.contentType });
+    } catch (error) {
+      await db.deleteFrom('evidence_attachment').where('id', '=', attachmentId).execute();
+      throw error;
+    }
+  }
+  return {
+    id: attachmentId,
+    filename: input.filename,
+    contentType: input.contentType,
+    sizeBytes: input.buffer.length,
+    storagePath: storageKey,
+    contentHash,
+  };
 }
 
 router.post(
@@ -1396,13 +1630,15 @@ router.post(
 
     const db = getDatabase();
 
-    // Authorization gate: the caller must be a participant in an
-    // assessment this evidence is linked to (or hold a view-all
-    // permission). `requirePermission('evidence.edit')` only asserts
-    // that the caller could edit *some* evidence; it does not scope
-    // the edit to this particular record. A 404 is used for the
-    // negative case to avoid leaking evidence existence.
-    const evidence = await getEvidenceIfAccessible(db, req.user.id, req.user.role, req.params.id as string);
+    // Authorization gate (WRITE): the caller must be the author, the
+    // assigned reviewer, a participant (assessor/assessee) on an
+    // assessment this evidence is linked to, or an administrator.
+    // `requirePermission('evidence.edit')` only asserts the caller could
+    // edit *some* evidence; it does not scope the edit to this record. A
+    // bare `*.view_all` read scope does NOT grant write here — "read all"
+    // must not imply "write all" (F02 BOLA). 404 on the negative case
+    // avoids leaking evidence existence.
+    const evidence = await getEvidenceIfWritable(db, req.user.id, req.user.role, req.params.id as string);
     if (!evidence) {
       res.status(404).json({ error: 'Evidence not found' });
       return;
@@ -1422,7 +1658,6 @@ router.post(
       // JSON body upload (for demo data seeding)
       try {
         const data = createAttachmentSchema.parse(req.body);
-        const attachmentId = uuidv4();
 
         // Decode base64 content
         const buffer = Buffer.from(data.binaryContent, 'base64');
@@ -1450,42 +1685,15 @@ router.post(
           return;
         }
 
-        const contentHash = computeContentHash(buffer);
-        const sizeBytes = buffer.length;
-        const resolvedContentType = mimeDecision.resolvedType;
-        const storageKey = `evidence/${req.params.id}/${attachmentId}-${data.filename}`;
-
-        // Build the row based on provider
-        const row: Record<string, unknown> = {
-          id: attachmentId,
-          evidenceId: req.params.id,
+        const saved = await persistAttachment(db, storageProvider, storageProviderName, req.params.id as string, {
           filename: data.filename,
-          contentType: resolvedContentType,
-          sizeBytes,
-          contentHash,
-          storageProvider: storageProviderName,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-
-        if (storageProviderName === 'database') {
-          row.binaryContent = buffer;
-          row.storagePath = storageKey;
-        } else {
-          // S3: write to object storage, store the key
-          await storageProvider.put(storageKey, buffer, { contentType: resolvedContentType });
-          row.storagePath = storageKey;
-          row.binaryContent = null;
-        }
-
-        await db
-          .insertInto('evidence_attachment')
-          .values(toSnakeCase(row))
-          .execute();
+          contentType: mimeDecision.resolvedType,
+          buffer,
+        });
 
         logger.info('Attachment created from JSON body', {
           evidenceId: req.params.id as string,
-          attachmentId,
+          attachmentId: saved.id,
           filename: data.filename,
           storageProvider: storageProviderName,
           userId: req.user?.id,
@@ -1494,14 +1702,7 @@ router.post(
 
         res.status(201).json({
           message: 'Attachment created successfully',
-          attachments: [{
-            id: attachmentId,
-            filename: data.filename,
-            contentType: resolvedContentType,
-            sizeBytes,
-            storagePath: storageKey,
-            contentHash,
-          }],
+          attachments: [saved],
         });
         return;
       } catch (error) {
@@ -1510,148 +1711,123 @@ router.post(
       }
     }
 
-      // Multipart form upload
+      // Multipart form upload. Files are buffered (bounded by size and
+      // count limits), then validated as a set, then persisted. The
+      // response is sent exactly once: busboy emits 'close' after
+      // 'error', and a second res.json() from an event callback would
+      // throw ERR_HTTP_HEADERS_SENT outside any handler and kill the process.
       const bb = busboy({
         headers: req.headers,
-        limits: { fileSize: maxFileSize },
+        limits: {
+          fileSize: maxFileSize,
+          files: MAX_ATTACHMENTS_PER_UPLOAD,
+          parts: MAX_ATTACHMENTS_PER_UPLOAD + 20,
+          fields: 20,
+        },
       });
 
-      const attachments: Record<string, unknown>[] = [];
+      const received: { filename: string; claimedType: string; chunks: Buffer[] }[] = [];
       let fileSizeLimitHit = false;
-      let mimeRejection: { filename: string; reason: string; detected: string } | null = null;
+      let countLimitHit = false;
+      let filenameTooLong = false;
+      let responded = false;
+      const respond = (status: number, body: Record<string, unknown>): void => {
+        if (responded || res.headersSent) return;
+        responded = true;
+        res.status(status).json(body);
+      };
 
       bb.on('file', (_fieldname, file, info) => {
-        try {
-          const attachmentId = uuidv4();
-          const filename = info.filename;
-          const contentTypeFromFile = info.mimeType;
-          const storageKey = `evidence/${req.params.id}/${attachmentId}-${filename}`;
+        const entry = { filename: info.filename, claimedType: info.mimeType, chunks: [] as Buffer[] };
+        if (!entry.filename || entry.filename.length > MAX_ATTACHMENT_FILENAME) filenameTooLong = true;
+        received.push(entry);
+        file.on('data', (chunk: Buffer) => {
+          if (!fileSizeLimitHit) entry.chunks.push(chunk);
+        });
+        file.on('limit', () => {
+          fileSizeLimitHit = true;
+          entry.chunks = [];
+          logger.warn('File size limit exceeded', { filename: entry.filename, limit: maxFileSize, requestId: req.requestId });
+        });
+        file.on('error', (error) => {
+          logger.error('File upload error', { error, requestId: req.requestId });
+        });
+      });
+      bb.on('filesLimit', () => { countLimitHit = true; });
+      bb.on('partsLimit', () => { countLimitHit = true; });
+      bb.on('fieldsLimit', () => { countLimitHit = true; });
 
-          const chunks: Buffer[] = [];
+      bb.on('error', (error) => {
+        logger.error('Busboy error', { error, requestId: req.requestId });
+        respond(400, { error: 'Error processing upload' });
+      });
 
-          file.on('data', (chunk: Buffer) => {
-            chunks.push(chunk);
-          });
+      bb.on('close', () => {
+        if (responded) return;
+        if (fileSizeLimitHit) {
+          respond(413, { error: `File exceeds maximum size of ${maxFileSize} bytes` });
+          return;
+        }
+        if (countLimitHit) {
+          respond(413, { error: `At most ${MAX_ATTACHMENTS_PER_UPLOAD} files per upload` });
+          return;
+        }
+        if (received.length === 0) {
+          respond(400, { error: 'No file in upload' });
+          return;
+        }
+        if (filenameTooLong) {
+          respond(400, { error: `Filename must be 1 to ${MAX_ATTACHMENT_FILENAME} characters` });
+          return;
+        }
 
-          file.on('limit', () => {
-            fileSizeLimitHit = true;
-            logger.warn('File size limit exceeded', {
-              filename,
-              limit: maxFileSize,
+        // Validate every file before persisting any, so a rejected file
+        // never leaves its siblings half-saved.
+        const accepted: AttachmentInput[] = [];
+        for (const entry of received) {
+          const buffer = Buffer.concat(entry.chunks);
+          const mimeDecision = verifyAttachmentMimeType(buffer, entry.filename, entry.claimedType);
+          if (!mimeDecision.allowed) {
+            logger.warn('Attachment rejected by MIME allowlist', {
+              evidenceId: req.params.id as string,
+              filename: entry.filename,
+              claimedType: entry.claimedType,
+              detectedType: mimeDecision.resolvedType,
+              reason: mimeDecision.reason,
+              userId: req.user?.id,
               requestId: req.requestId,
             });
-          });
+            respond(415, {
+              error: mimeDecision.reason ?? 'Unsupported media type',
+              filename: entry.filename,
+              detectedType: mimeDecision.resolvedType,
+            });
+            return;
+          }
+          accepted.push({ filename: entry.filename, contentType: mimeDecision.resolvedType, buffer });
+        }
 
-          file.on('end', async () => {
-            if (fileSizeLimitHit) return;
-            if (mimeRejection) return;
-
-            try {
-              const buffer = Buffer.concat(chunks);
-              const sizeBytes = buffer.length;
-
-              const mimeDecision = verifyAttachmentMimeType(buffer, filename, contentTypeFromFile);
-              if (!mimeDecision.allowed) {
-                mimeRejection = {
-                  filename,
-                  reason: mimeDecision.reason ?? 'Unsupported media type',
-                  detected: mimeDecision.resolvedType,
-                };
-                logger.warn('Attachment rejected by MIME allowlist', {
-                  evidenceId: req.params.id as string,
-                  filename,
-                  claimedType: contentTypeFromFile,
-                  detectedType: mimeDecision.resolvedType,
-                  reason: mimeDecision.reason,
-                  userId: req.user?.id,
-                  requestId: req.requestId,
-                });
-                return;
-              }
-
-              const contentHash = computeContentHash(buffer);
-              const resolvedContentType = mimeDecision.resolvedType;
-
-              // Build the row based on active storage provider
-              const row: Record<string, unknown> = {
-                id: attachmentId,
-                evidenceId: req.params.id as string,
-                filename,
-                contentType: resolvedContentType,
-                sizeBytes,
-                contentHash,
-                storageProvider: storageProviderName,
-                createdAt: new Date(),
-                updatedAt: new Date(),
-              };
-
-              if (storageProviderName === 'database') {
-                row.binaryContent = buffer;
-                row.storagePath = storageKey;
-              } else {
-                // S3: write to object storage
-                await storageProvider.put(storageKey, buffer, { contentType: resolvedContentType });
-                row.storagePath = storageKey;
-                row.binaryContent = null;
-              }
-
-              await db
-                .insertInto('evidence_attachment')
-                .values(toSnakeCase(row))
-                .execute();
-
-              attachments.push({
-                id: attachmentId,
-                filename,
-                contentType: resolvedContentType,
-                sizeBytes,
-                storagePath: storageKey,
-                contentHash,
-              });
-
+        void (async () => {
+          const saved: Record<string, unknown>[] = [];
+          try {
+            for (const input of accepted) {
+              const attachment = await persistAttachment(db, storageProvider, storageProviderName, req.params.id as string, input);
+              saved.push(attachment);
               logger.info('Attachment uploaded', {
                 evidenceId: req.params.id as string,
-                attachmentId,
-                filename,
+                attachmentId: attachment.id,
+                filename: input.filename,
                 storageProvider: storageProviderName,
                 userId: req.user?.id,
                 requestId: req.requestId,
               });
-            } catch (error) {
-              logger.error('Error saving attachment', { error, requestId: req.requestId });
             }
-          });
-
-          file.on('error', (error) => {
-            logger.error('File upload error', { error, requestId: req.requestId });
-          });
-        } catch (error) {
-          logger.error('Error processing file', { error, requestId: req.requestId });
-        }
-      });
-
-      bb.on('close', () => {
-        if (fileSizeLimitHit) {
-          res.status(413).json({ error: `File exceeds maximum size of ${maxFileSize} bytes` });
-          return;
-        }
-        if (mimeRejection) {
-          res.status(415).json({
-            error: mimeRejection.reason,
-            filename: mimeRejection.filename,
-            detectedType: mimeRejection.detected,
-          });
-          return;
-        }
-        res.status(201).json({
-          message: 'Attachments uploaded successfully',
-          attachments,
-        });
-      });
-
-      bb.on('error', (error) => {
-        logger.error('Busboy error', { error, requestId: req.requestId });
-        res.status(400).json({ error: 'Error processing upload' });
+            respond(201, { message: 'Attachments uploaded successfully', attachments: saved });
+          } catch (error) {
+            logger.error('Error saving attachment', { error, requestId: req.requestId });
+            respond(500, { error: 'Failed to save attachment', saved: saved.length });
+          }
+        })();
       });
 
     req.pipe(bb);
@@ -1705,17 +1881,7 @@ router.get(
     // or same-origin privileges even when served with a rich MIME
     // type.
     res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; frame-ancestors 'none'");
-    // Sanitize filename to prevent header injection (CWE-113) and path traversal
-    const sanitizedFilename = attachment.filename
-      .replace(/[\r\n]/g, '')           // Strip newlines (header injection)
-      .replace(/[/\\]/g, '_')           // Strip path separators (traversal)
-      .replace(/[^\w\s.\-()]/g, '_')    // Keep only safe characters
-      .substring(0, 255);               // Enforce length limit
-    const encodedFilename = encodeURIComponent(sanitizedFilename);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${sanitizedFilename}"; filename*=UTF-8''${encodedFilename}`
-    );
+    res.setHeader('Content-Disposition', contentDisposition('attachment', attachment.filename));
 
     // Resolve the provider that was used to store this particular attachment,
     // not the currently configured provider. This ensures mixed-storage
@@ -1771,12 +1937,12 @@ router.delete(
     }
     const db = getDatabase();
 
-    // Authorization gate: the caller must be a participant in an
-    // assessment this evidence is linked to (or hold a view-all
-    // permission). Same rationale as the POST route above: a global
-    // `evidence.delete` permission does not imply record-level
-    // authority over every evidence item.
-    const accessible = await getEvidenceIfAccessible(db, req.user.id, req.user.role, req.params.id as string);
+    // Authorization gate (WRITE): author, assigned reviewer, a participant
+    // on a linked assessment, or administrator. Same rationale as the POST
+    // route: a global `evidence.delete` permission does not imply
+    // record-level authority, and a bare `*.view_all` read scope does NOT
+    // grant write (F02 BOLA). 404 avoids leaking existence.
+    const accessible = await getEvidenceIfWritable(db, req.user.id, req.user.role, req.params.id as string);
     if (!accessible) {
       res.status(404).json({ error: 'Attachment not found' });
       return;

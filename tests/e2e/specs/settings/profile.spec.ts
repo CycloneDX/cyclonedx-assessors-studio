@@ -66,7 +66,7 @@ authedTest.describe('Profile + password settings @regression', () => {
  * change does not affect the storage states used by other tests.
  */
 authedTest.describe('Password change @regression', () => {
-  authedTest('rejects wrong current password (401)', async ({ apiAs }, testInfo) => {
+  authedTest('rejects wrong current password (400)', async ({ apiAs }, testInfo) => {
     const adminApi = await apiAs('admin');
     const username = `pwd_wrong_${Date.now().toString(36)}`;
     await adminApi.post('/api/v1/users', {
@@ -86,7 +86,7 @@ authedTest.describe('Password change @regression', () => {
     const r = await ctx.put('/api/v1/auth/change-password', {
       data: { currentPassword: 'WrongPassword123!', newPassword: PASSWORD_NEW },
     });
-    expect(r.status()).toBe(401);
+    expect(r.status()).toBe(400);
     await ctx.dispose();
   });
 

@@ -1,5 +1,4 @@
 import client from './client'
-import type { Entity, EntityRelationship, CompliancePolicy, AssessmentProgress, PaginatedResponse } from '@/types'
 
 export async function getEntities(params?: { entityType?: string; state?: string; search?: string; limit?: number; offset?: number }) {
   const query: Record<string, string | number> = {}
@@ -27,13 +26,17 @@ export async function createEntity(entity: { name: string; description?: string 
   return data
 }
 
-export async function updateEntity(id: string, updates: { name?: string; description?: string | null; state?: string; entityType?: string; tags?: string[] }) {
+export async function updateEntity(id: string, updates: { name?: string; description?: string | null; state?: string; entityType?: string; tags?: string[]; country?: string | null; region?: string | null; locality?: string | null; timezone?: string | null }) {
   const payload: Record<string, string | string[] | null | undefined> = {}
   if (updates.name !== undefined) payload.name = updates.name
   if (updates.description !== undefined) payload.description = updates.description
   if (updates.state !== undefined) payload.state = updates.state
   if (updates.entityType !== undefined) payload.entityType = updates.entityType
   if (updates.tags !== undefined) payload.tags = updates.tags
+  if (updates.country !== undefined) payload.country = updates.country
+  if (updates.region !== undefined) payload.region = updates.region
+  if (updates.locality !== undefined) payload.locality = updates.locality
+  if (updates.timezone !== undefined) payload.timezone = updates.timezone
   const { data } = await client.put(`/entities/${id}`, payload)
   return data
 }
@@ -50,11 +53,6 @@ export async function getEntityChildren(id: string) {
 
 export async function getEntityAssessments(id: string) {
   const { data } = await client.get(`/entities/${id}/assessments`)
-  return data
-}
-
-export async function getEntityHistory(id: string) {
-  const { data } = await client.get(`/entities/${id}/history`)
   return data
 }
 
@@ -80,11 +78,6 @@ export async function removeRelationship(id: string, relId: string) {
   return data
 }
 
-
-export async function getEntityPolicies(id: string) {
-  const { data } = await client.get(`/entities/${id}/policies`)
-  return data
-}
 
 export async function createPolicy(id: string, standardId: string, description?: string) {
   const { data } = await client.post(`/entities/${id}/policies`, { standardId, description })

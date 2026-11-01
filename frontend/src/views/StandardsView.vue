@@ -2,11 +2,16 @@
   <div class="standards-container">
     <PageHeader :title="t('standards.title')">
       <template #actions>
-        <el-button v-if="canManageStandards" type="success" @click="showCreateDialog = true">
-          {{ t('standards.newStandard') }}
-        </el-button>
+        <el-badge v-if="authStore.hasPermission('standards.import')" :value="feedBadgeCount || ''" :hidden="feedBadgeCount === 0" type="danger">
+          <el-button :icon="Refresh" :loading="feedChecking" @click="openFeedDialog">
+            Check for Updates
+          </el-button>
+        </el-badge>
         <el-button v-if="authStore.hasPermission('standards.import')" type="primary" @click="showImportDialog = true">
           {{ t('standards.importStandard') }}
+        </el-button>
+        <el-button v-if="canManageStandards" type="success" @click="showCreateDialog = true">
+          {{ t('standards.newStandard') }}
         </el-button>
       </template>
     </PageHeader>
@@ -88,7 +93,6 @@
           Select a CycloneDX JSON file containing a standards definition. The standard name, version, and requirements will be extracted automatically.
         </p>
         <el-upload
-          ref="uploadRef"
           :auto-upload="false"
           :limit="1"
           accept=".json,.cdx.json"
@@ -126,6 +130,70 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- Feed / Check for Updates dialog -->
+    <el-dialog v-model="showFeedDialog" title="CycloneDX Standards Feed" width="680px" destroy-on-close>
+      <div class="feed-dialog-body">
+        <!-- Header bar -->
+        <div class="feed-dialog-meta">
+          <span v-if="feedLastChecked" class="feed-last-checked">
+            Last checked: {{ feedLastChecked.toLocaleString() }}
+          </span>
+          <div style="flex:1" />
+          <el-button size="small" :icon="Refresh" :loading="feedChecking" @click="checkFeed(true)">
+            Refresh
+          </el-button>
+        </div>
+
+        <!-- Error -->
+        <el-alert v-if="feedError" type="warning" :closable="false" style="margin-bottom:12px">
+          Could not reach the CycloneDX standards feed: {{ feedError }}
+        </el-alert>
+
+        <!-- Loading -->
+        <div v-if="feedChecking" class="feed-loading">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          Checking for updates…
+        </div>
+
+        <!-- Up to date -->
+        <el-result
+          v-else-if="!feedError && feedAvailable.length === 0"
+          icon="success"
+          title="You're up to date"
+          sub-title="All standards in the CycloneDX catalogue are already imported."
+        />
+
+        <!-- Available updates -->
+        <template v-else-if="feedAvailable.length > 0">
+          <p class="feed-available-label">
+            {{ feedAvailable.length }} standard{{ feedAvailable.length !== 1 ? 's' : '' }} available from the CycloneDX catalogue:
+          </p>
+          <div class="feed-entry-list">
+            <div v-for="entry in feedAvailable" :key="entry.feedId" class="feed-entry">
+              <div class="feed-entry-info">
+                <span class="feed-entry-name">{{ entry.title }}</span>
+                <span class="feed-entry-version">v{{ entry.version }}</span>
+                <span class="feed-entry-owner">{{ entry.owner }}</span>
+                <p v-if="entry.summary" class="feed-entry-summary">{{ entry.summary }}</p>
+              </div>
+              <el-button
+                type="primary"
+                size="small"
+                :icon="Download"
+                :loading="feedImporting[entry.feedId]"
+                @click="importFromFeed(entry)"
+              >
+                Import
+              </el-button>
+            </div>
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <el-button @click="showFeedDialog = false">Close</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -133,13 +201,13 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Loading, Upload } from '@element-plus/icons-vue'
+import { Loading, Upload, Refresh, Download } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import RowActions from '@/components/shared/RowActions.vue'
 import StateBadge from '@/components/shared/StateBadge.vue'
-import axios from 'axios'
+import client from '@/api/client'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -150,7 +218,6 @@ const error = ref('')
 const standards = ref<Record<string, unknown>[]>([])
 const showImportDialog = ref(false)
 const importing = ref(false)
-const uploadRef = ref()
 const selectedFile = ref<File | null>(null)
 const importParseError = ref('')
 const importPreview = ref<{
@@ -181,7 +248,7 @@ const fetchStandards = async () => {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await axios.get('/api/v1/standards')
+    const { data } = await client.get('/standards', { params: { limit: 100 } })
     standards.value = data.data || []
   } catch (err: unknown) {
     const e = err as { response?: { data?: { error?: string } } }
@@ -206,7 +273,7 @@ const handleDeleteStandard = async (row: Record<string, unknown>) => {
         type: 'warning',
       }
     )
-    await axios.delete(`/api/v1/standards/${row.id as string}`)
+    await client.delete(`/standards/${row.id as string}`)
     ElMessage.success('Standard deleted')
     await fetchStandards()
   } catch (err: unknown) {
@@ -219,7 +286,7 @@ const handleDeleteStandard = async (row: Record<string, unknown>) => {
 
 const handleExportStandard = async (row: Record<string, unknown>) => {
   try {
-    const response = await axios.get(`/api/v1/standards/${row.id as string}/export`, {
+    const response = await client.get(`/standards/${row.id as string}/export`, {
       responseType: 'blob',
     })
     const blob = new Blob([response.data], { type: 'application/vnd.cyclonedx+json' })
@@ -350,7 +417,7 @@ const handleImport = async () => {
 
   importing.value = true
   try {
-    await axios.post('/api/v1/standards/import', {
+    await client.post('/standards/import', {
       name: importPreview.value.name,
       identifier: importPreview.value.identifier,
       version: importPreview.value.version || undefined,
@@ -421,7 +488,7 @@ const handleCreateStandard = async () => {
 
   creatingStandard.value = true
   try {
-    const { data } = await axios.post('/api/v1/standards', {
+    const { data } = await client.post('/standards', {
       name: createStandardForm.value.name,
       identifier: createStandardForm.value.identifier,
       version: createStandardForm.value.version || undefined,
@@ -441,7 +508,77 @@ const handleCreateStandard = async () => {
   }
 }
 
-onMounted(fetchStandards)
+// ─── Feed / update-check ──────────────────────────────────────────────────────
+
+interface FeedEntry {
+  feedId: string
+  title: string
+  version: string
+  owner: string
+  summary: string | null
+  bomLink: string
+  bomRef: string
+  downloadUrl: string
+  dateModified: string
+}
+
+const showFeedDialog   = ref(false)
+const feedChecking     = ref(false)
+const feedLastChecked  = ref<Date | null>(null)
+const feedAvailable    = ref<FeedEntry[]>([])
+const feedError        = ref('')
+const feedImporting    = ref<Record<string, boolean>>({})
+
+const feedBadgeCount = computed(() => feedAvailable.value.length)
+
+async function checkFeed(force = false) {
+  feedChecking.value = true
+  feedError.value = ''
+  try {
+    const { data } = await client.get('/standards/feed/check', {
+      params: force ? { force: 'true' } : {},
+    })
+    feedAvailable.value  = data.available ?? []
+    feedLastChecked.value = data.lastChecked ? new Date(data.lastChecked) : new Date()
+    if (data.error) feedError.value = data.error
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string } } }
+    feedError.value = e.response?.data?.error ?? 'Failed to reach standards feed'
+  } finally {
+    feedChecking.value = false
+  }
+}
+
+async function importFromFeed(entry: FeedEntry) {
+  feedImporting.value = { ...feedImporting.value, [entry.feedId]: true }
+  try {
+    await client.post('/standards/feed/import', {
+      downloadUrl: entry.downloadUrl,
+      title: entry.title,
+    })
+    ElMessage.success(`"${entry.title}" imported successfully`)
+    feedAvailable.value = feedAvailable.value.filter(e => e.feedId !== entry.feedId)
+    await fetchStandards()
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string } } }
+    ElMessage.error(e.response?.data?.error ?? 'Import failed')
+  } finally {
+    const updated = { ...feedImporting.value }
+    delete updated[entry.feedId]
+    feedImporting.value = updated
+  }
+}
+
+async function openFeedDialog() {
+  showFeedDialog.value = true
+  if (feedLastChecked.value === null) await checkFeed()
+}
+
+onMounted(async () => {
+  await fetchStandards()
+  // Silently prime the feed cache so the badge populates quickly
+  checkFeed().catch(() => {})
+})
 </script>
 
 <style scoped lang="scss">
@@ -479,5 +616,91 @@ onMounted(fetchStandards)
   &:hover > td {
     background-color: var(--cat-bg-hover) !important;
   }
+}
+
+// Feed dialog styles
+.feed-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.feed-dialog-meta {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 8px;
+}
+
+.feed-last-checked {
+  font-size: 12px;
+  color: var(--cat-text-tertiary);
+}
+
+.feed-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--cat-text-secondary);
+}
+
+.feed-available-label {
+  font-size: 13px;
+  color: var(--cat-text-secondary);
+  margin: 0 0 12px;
+}
+
+.feed-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.feed-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--cat-bg-secondary);
+  border: 1px solid var(--cat-border-default);
+  border-radius: var(--cat-radius-md);
+
+  .el-button { flex-shrink: 0; margin-top: 2px; }
+}
+
+.feed-entry-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.feed-entry-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--cat-text-primary);
+}
+
+.feed-entry-version {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  font-family: var(--cat-font-mono);
+}
+
+.feed-entry-owner {
+  font-size: 11px;
+  color: var(--cat-text-tertiary);
+}
+
+.feed-entry-summary {
+  font-size: 12px;
+  color: var(--cat-text-secondary);
+  margin: 4px 0 0;
+  line-height: 1.4;
 }
 </style>

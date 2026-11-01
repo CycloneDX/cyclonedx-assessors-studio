@@ -619,7 +619,7 @@ describe('Auth Routes (HTTP Integration)', () => {
           newPassword: 'NewPassword456!',
         });
 
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(400);
       expect(res.body).toHaveProperty('error');
       expect(res.body.error).toBe('Current password is incorrect');
     });

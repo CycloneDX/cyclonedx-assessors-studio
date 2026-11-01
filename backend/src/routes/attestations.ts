@@ -1,5 +1,7 @@
 import { Router } from 'express';
-import type { Response } from 'express';
+import { readableAssessmentIds, allowsAssessment, canWriteAssessment } from '../utils/access.js';
+import { clampPagination } from '../utils/pagination.js';
+import type { NextFunction, Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/connection.js';
@@ -40,6 +42,7 @@ import type {
   ClaimRowInput,
   SignatoryBlockInput,
 } from '../cdxspec/index.js';
+import { ATTESTATION_CREATED } from '../events/catalog.js';
 
 const router = Router();
 
@@ -80,16 +83,43 @@ const updateRequirementSchema = z.object({
   confidenceRationale: z.string().optional(),
 });
 
-router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
-  const db = getDatabase();
-  const limit = Math.min(Number(req.query.limit) || 50, 100);
-  const offset = Number(req.query.offset) || 0;
+/**
+ * Write gate for an existing attestation: the caller must be able to
+ * write its assessment (security review Z8). 404 when it does not exist.
+ */
+async function requireAttestationWrite(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const db = getDatabase();
+    const row = await db.selectFrom('attestation').select('assessment_id').where('id', '=', req.params.id as string).executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: 'Attestation not found' });
+      return;
+    }
+    if (!(await canWriteAssessment(db, req.user!, row.assessment_id as string))) {
+      res.status(403).json({ error: 'Only an assessor assigned to this assessment can change its attestation' });
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
 
-  const total = await db
-    .selectFrom('attestation')
-    .select(db.fn.count<number>('id').as('count'))
-    .executeTakeFirstOrThrow()
-    .then(r => r.count);
+router.get('/', requireAuth, requirePermission('attestations.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDatabase();
+  const { limit, offset } = clampPagination(req.query as Record<string, unknown>);
+
+  // Without assessments.view_all, only attestations on assessments the
+  // caller participates in (security review Z3).
+  const readable = await readableAssessmentIds(db, req.user!);
+  if (readable !== null && readable.length === 0) {
+    res.json({ data: [], pagination: { limit, offset, total: 0 } });
+    return;
+  }
+
+  let totalQuery = db.selectFrom('attestation').select(db.fn.count<number>('id').as('count'));
+  if (readable !== null) totalQuery = totalQuery.where('assessment_id', 'in', readable);
+  const total = await totalQuery.executeTakeFirstOrThrow().then(r => r.count);
 
   const attestations = (await db
     .selectFrom('attestation')
@@ -127,14 +157,56 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
     // at the top of the list and stay reachable on page 1. Secondary
     // id sort guarantees stable ordering for rows that share a
     // created_at timestamp.
+    .$if(readable !== null, (qb) => qb.where('attestation.assessment_id', 'in', readable as string[]))
     .orderBy('attestation.created_at', 'desc')
     .orderBy('attestation.id', 'desc')
     .limit(limit)
     .offset(offset)
     .execute()) as Record<string, unknown>[];
 
+  // Enrich with per-attestation counts in two cheap aggregation queries
+  const attIds = attestations.map(a => a.id as string);
+
+  let reqCounts: { attestation_id: unknown; count: unknown }[] = [];
+  let claimCounts: { attestation_id: unknown; count: unknown }[] = [];
+  let avgScores: { attestation_id: unknown; avg: unknown }[] = [];
+
+  if (attIds.length > 0) {
+    reqCounts = await db
+      .selectFrom('attestation_requirement')
+      .where('attestation_id', 'in', attIds)
+      .select(['attestation_id', db.fn.count<number>('id').as('count')])
+      .groupBy('attestation_id')
+      .execute() as { attestation_id: unknown; count: unknown }[];
+
+    claimCounts = await db
+      .selectFrom('claim')
+      .where('attestation_id', 'in', attIds)
+      .select(['attestation_id', db.fn.count<number>('id').as('count')])
+      .groupBy('attestation_id')
+      .execute() as { attestation_id: unknown; count: unknown }[];
+
+    avgScores = await db
+      .selectFrom('attestation_requirement')
+      .where('attestation_id', 'in', attIds)
+      .select(['attestation_id', db.fn.avg<number>('conformance_score').as('avg')])
+      .groupBy('attestation_id')
+      .execute() as { attestation_id: unknown; avg: unknown }[];
+  }
+
+  const reqCountMap = new Map(reqCounts.map(r => [r.attestation_id, Number(r.count)]));
+  const claimCountMap = new Map(claimCounts.map(r => [r.attestation_id, Number(r.count)]));
+  const avgScoreMap = new Map(avgScores.map(r => [r.attestation_id, r.avg !== null ? Number(r.avg) : null]));
+
+  const enriched = attestations.map(a => ({
+    ...a,
+    requirementCount: reqCountMap.get(a.id as string) ?? 0,
+    claimCount: claimCountMap.get(a.id as string) ?? 0,
+    avgConformanceScore: avgScoreMap.get(a.id as string) ?? null,
+  }));
+
   res.json({
-    data: attestations,
+    data: enriched,
     pagination: {
       limit,
       offset,
@@ -143,12 +215,13 @@ router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response
   });
 }));
 
-router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/:id', requireAuth, requirePermission('attestations.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
 
   const attestation = await fetchAttestationById(db, req.params.id as string);
 
-  if (!attestation) {
+  // Out-of-scope reads look like missing records (security review Z3).
+  if (!attestation || !allowsAssessment(await readableAssessmentIds(db, req.user!), attestation.assessment_id as string)) {
     res.status(404).json({ error: 'Attestation not found' });
     return;
   }
@@ -181,6 +254,11 @@ router.post(
         .selectAll()
         .executeTakeFirst();
 
+      if (assessment && !(await canWriteAssessment(db, req.user!, data.assessmentId))) {
+        res.status(403).json({ error: 'Only an assessor assigned to this assessment can attest it' });
+        return;
+      }
+
       if (!assessment) {
         res.status(404).json({ error: 'Assessment not found' });
         return;
@@ -209,11 +287,58 @@ router.post(
         }))
         .execute();
 
+      // Auto-populate attestation_requirement rows from assessment_requirement
+      // scores recorded during the assessment. Only copies rows where
+      // conformance_score and conformance_rationale are both present.
+      const scoredReqs = await db
+        .selectFrom('assessment_requirement')
+        .where('assessment_id', '=', data.assessmentId)
+        .where('conformance_score', 'is not', null)
+        .where('conformance_rationale', 'is not', null)
+        .select([
+          'requirement_id',
+          'conformance_score',
+          'conformance_rationale',
+          'confidence_score',
+          'confidence_rationale',
+        ])
+        .execute();
+
+      for (const sr of scoredReqs) {
+        const existing = await db
+          .selectFrom('attestation_requirement')
+          .where('attestation_id', '=', attestationId)
+          .where('requirement_id', '=', sr.requirement_id)
+          .select('id')
+          .executeTakeFirst();
+        if (!existing) {
+          await db.insertInto('attestation_requirement').values({
+            id: uuidv4(),
+            attestation_id: attestationId,
+            requirement_id: sr.requirement_id,
+            conformance_score: sr.conformance_score as number,
+            conformance_rationale: sr.conformance_rationale as string,
+            confidence_score: sr.confidence_score as number | null ?? null,
+            confidence_rationale: sr.confidence_rationale as string | null ?? null,
+          }).execute();
+        }
+      }
+
       logger.info('Attestation created', {
         attestationId,
         assessmentId: data.assessmentId,
+        requirementsCopied: scoredReqs.length,
         requestId: req.requestId,
       });
+
+      const project = assessment.project_id
+        ? await db.selectFrom('project').select('name').where('id', '=', assessment.project_id).executeTakeFirst()
+        : undefined;
+      req.eventBus?.emit(
+        ATTESTATION_CREATED,
+        { attestationId, assessmentId: data.assessmentId, projectName: project?.name ?? null },
+        { userId: req.user!.id, displayName: req.user!.displayName },
+      );
 
       res.status(201).json({
         id: attestationId,
@@ -238,6 +363,7 @@ router.put(
   // onto every role that already had attestations.create so existing
   // grants keep working.
   requirePermission('attestations.edit'),
+  requireAttestationWrite,
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = updateAttestationSchema.parse(req.body);
@@ -300,6 +426,7 @@ router.post(
   '/:id/requirements',
   requireAuth,
   requirePermission('attestations.edit'),
+  requireAttestationWrite,
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = addRequirementSchema.parse(req.body);
@@ -358,7 +485,7 @@ router.post(
             requirementId: data.requirementId,
             conformanceScore: data.conformanceScore,
             conformanceRationale: data.conformanceRationale,
-            confidenceScore: data.confidenceScore || null,
+            confidenceScore: data.confidenceScore ?? null,
             confidenceRationale: data.confidenceRationale || null,
           }))
           .execute();
@@ -382,6 +509,7 @@ router.put(
   '/:id/requirements/:requirementId',
   requireAuth,
   requirePermission('attestations.edit'),
+  requireAttestationWrite,
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const data = updateRequirementSchema.parse(req.body);
@@ -422,7 +550,7 @@ router.put(
         .set(toSnakeCase({
           conformanceScore: data.conformanceScore,
           conformanceRationale: data.conformanceRationale,
-          confidenceScore: data.confidenceScore || null,
+          confidenceScore: data.confidenceScore ?? null,
           confidenceRationale: data.confidenceRationale || null,
         }))
         .where('attestation_id', '=', req.params.id)
@@ -446,12 +574,13 @@ router.put(
 router.get(
   '/:id/requirements',
   requireAuth,
+  requirePermission('attestations.view'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
 
     const attestation = await fetchAttestationById(db, req.params.id as string);
 
-    if (!attestation) {
+    if (!attestation || !allowsAssessment(await readableAssessmentIds(db, req.user!), attestation.assessment_id as string)) {
       res.status(404).json({ error: 'Attestation not found' });
       return;
     }
@@ -505,6 +634,11 @@ router.get(
   requirePermission('attestations.export'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
+    const scoped = await db.selectFrom('attestation').select('assessment_id').where('id', '=', req.params.id as string).executeTakeFirst();
+    if (!scoped || !allowsAssessment(await readableAssessmentIds(db, req.user!), scoped.assessment_id as string)) {
+      res.status(404).json({ error: 'Attestation not found' });
+      return;
+    }
     const attestation = await fetchAttestationById(db, req.params.id as string);
 
     if (!attestation) {
@@ -746,10 +880,26 @@ router.get(
       documentSeal: affirmationBuild.documentSeal,
     });
 
+    // Build a human-readable filename: {assessment-title}-attestation-{date}.cdx.json
+    const assessmentForFilename = attestation.assessment_id
+      ? await db
+          .selectFrom('assessment')
+          .where('id', '=', attestation.assessment_id)
+          .select('title')
+          .executeTakeFirst()
+      : null;
+    const titleSlug = (assessmentForFilename?.title ?? 'assessment')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const exportFilename = `${titleSlug}-attestation-${dateStr}.cdx.json`;
+
     res.setHeader('Content-Type', 'application/vnd.cyclonedx+json');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="attestation-${attestation.id}-cdx-${specVersion}.json"`
+      `attachment; filename="${exportFilename}"`
     );
     res.json(cdxa);
   })

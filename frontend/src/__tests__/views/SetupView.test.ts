@@ -1,286 +1,164 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import axios from 'axios'
+
+const { validateMock } = vi.hoisted(() => ({ validateMock: vi.fn() }))
 
 vi.mock('vue-router', async () => {
   const { createVueRouterMock } = await import('@/__tests__/helpers/vueRouterMock')
-  return createVueRouterMock()
+  return createVueRouterMock({ route: { path: '/setup' } })
 })
+
+vi.mock('@/router', () => ({ markSetupDone: vi.fn(), default: {} }))
 
 vi.mock('vue-i18n', () => ({
-  useI18n: vi.fn(() => ({ t: (key: string) => key })),
-  createI18n: vi.fn(() => ({ global: { t: (k: string) => k }, install: vi.fn() }))
+  useI18n: vi.fn(() => ({ t: (key: string) => key, locale: { value: 'en-US' } })),
+  createI18n: vi.fn(() => ({ global: { t: (k: string) => k, locale: { value: 'en-US' } }, install: vi.fn() })),
 }))
 
-vi.mock('axios', () => {
-  const mockAxiosInstance = {
-    get: vi.fn().mockResolvedValue({ data: { data: [] } }),
-    post: vi.fn().mockResolvedValue({ data: {} }),
-    put: vi.fn().mockResolvedValue({ data: {} }),
-    delete: vi.fn().mockResolvedValue({ data: {} }),
-    interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } },
-  }
-  return { default: { ...mockAxiosInstance, create: vi.fn(() => mockAxiosInstance) } }
-})
+vi.mock('@/api/client', () => ({
+  default: { get: vi.fn(), post: vi.fn() },
+}))
+
+vi.mock('@/api/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/auth')>()),
+  getPasswordPolicy: vi.fn().mockResolvedValue({ minLength: 12, maxLength: 128 }),
+}))
 
 vi.mock('element-plus', () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
-  ElMessageBox: { confirm: vi.fn() }
+  ElMessageBox: { confirm: vi.fn() },
 }))
 
-const ElStubs = {
-  ElButton: { template: '<button @click="$emit(\'click\')"><slot /></button>', props: ['type', 'loading', 'disabled'] },
-  ElForm: { template: '<form><slot /></form>' },
-  ElFormItem: { template: '<div class="form-item"><slot /></div>', props: ['label', 'prop'] },
-  ElInput: { template: '<input />', props: ['modelValue', 'placeholder', 'type'] },
-  ElSteps: { template: '<div class="steps"><slot /></div>', props: ['active', 'finishStatus'] },
-  ElStep: { template: '<div class="step"><slot /></div>', props: ['title', 'description', 'status'] },
-  ElCard: { template: '<div class="card"><slot /></div>' },
-  ElIcon: { template: '<i><slot /></i>' },
-  PageHeader: { template: '<div class="page-header"><slot /></div>', props: ['title'] },
+import SetupView from '@/views/SetupView.vue'
+import client from '@/api/client'
+import { markSetupDone } from '@/router'
+import { useAuthStore } from '@/stores/auth'
+import { elStubs } from '@/__tests__/helpers/elStubs'
+
+const admin = { id: 'u1', username: 'admin', email: 'admin@example.test', displayName: 'Admin', role: 'admin' }
+
+// The form is validated through the el-form instance; expose validate().
+const ElForm = { template: '<form><slot /></form>', methods: { validate: validateMock } }
+
+let wrapper: VueWrapper | undefined
+
+function mountView() {
+  wrapper = mount(SetupView, { shallow: true, global: { stubs: { ...elStubs, ElForm } } })
+  return wrapper
 }
 
-const SetupView = {
-  template: `
-    <div class="setup-container">
-      <div class="setup-header">
-        <h1>Setup Wizard</h1>
-      </div>
-
-      <el-steps :active="currentStep" finish-status="success">
-        <el-step title="Welcome" description="Get started" />
-        <el-step title="Admin Account" description="Create admin user" />
-        <el-step title="Organization" description="Configure organization" />
-      </el-steps>
-
-      <div class="setup-content">
-        <!-- Welcome Step -->
-        <div v-if="currentStep === 0" class="step-content">
-          <el-card>
-            <h2>Welcome to Assessors Studio</h2>
-            <p>This wizard will help you set up your system.</p>
-            <el-button type="primary" @click="nextStep">Get Started</el-button>
-          </el-card>
-        </div>
-
-        <!-- Admin Creation Step -->
-        <div v-if="currentStep === 1" class="step-content">
-          <el-card>
-            <h2>Create Admin Account</h2>
-            <el-form>
-              <el-form-item label="Username" prop="username">
-                <el-input v-model="adminForm.username" placeholder="Admin username" />
-              </el-form-item>
-              <el-form-item label="Email" prop="email">
-                <el-input v-model="adminForm.email" type="email" placeholder="admin@example.com" />
-              </el-form-item>
-              <el-form-item label="Password" prop="password">
-                <el-input v-model="adminForm.password" type="password" placeholder="Password" />
-              </el-form-item>
-              <el-button type="primary" @click="nextStep" :disabled="!isAdminFormValid">Next</el-button>
-            </el-form>
-          </el-card>
-        </div>
-
-        <!-- Org Config Step -->
-        <div v-if="currentStep === 2" class="step-content">
-          <el-card>
-            <h2>Configure Organization</h2>
-            <el-form>
-              <el-form-item label="Organization Name" prop="orgName">
-                <el-input v-model="orgForm.name" placeholder="Your organization" />
-              </el-form-item>
-              <el-button type="primary" @click="completeSetup">Complete Setup</el-button>
-            </el-form>
-          </el-card>
-        </div>
-      </div>
-    </div>
-  `,
-  props: {},
-  setup() {
-    const currentStep = ref(0)
-    const adminForm = ref({
-      username: '',
-      email: '',
-      password: ''
-    })
-    const orgForm = ref({
-      name: ''
-    })
-
-    const isAdminFormValid = computed(() => {
-      return adminForm.value.username && adminForm.value.email && adminForm.value.password
-    })
-
-    const nextStep = () => {
-      currentStep.value++
-    }
-
-    const completeSetup = async () => {
-      try {
-        await axios.post('/api/v1/setup/complete', {
-          admin: adminForm.value,
-          organization: orgForm.value
-        })
-      } catch (err: any) {
-        console.error('Setup failed')
-      }
-    }
-
-    return {
-      currentStep,
-      adminForm,
-      orgForm,
-      isAdminFormValid,
-      nextStep,
-      completeSetup
-    }
-  }
+async function onAccountStep(w: VueWrapper) {
+  w.vm.step = 1
+  await nextTick()
+  Object.assign(w.vm.form, {
+    setupToken: ' token-from-log ',
+    username: 'admin', email: 'admin@example.test', displayName: 'Admin',
+    password: 'Str0ng-Passw0rd!', confirmPassword: 'Str0ng-Passw0rd!',
+  })
 }
-
-import { ref, computed } from 'vue'
 
 describe('SetupView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    validateMock.mockResolvedValue(true)
+    vi.mocked(client.get).mockResolvedValue({ data: { standards: [] } })
+    vi.mocked(client.post).mockResolvedValue({ data: { user: admin, permissions: ['admin.settings'] } })
   })
 
-  it('renders step indicator dots', () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    expect(wrapper.find('.steps').exists()).toBe(true)
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = undefined
   })
 
-  it('shows welcome step initially', () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    const steps = wrapper.findAll('.step')
-    expect(steps.length).toBeGreaterThanOrEqual(3)
-  })
-
-  it('shows welcome step heading', () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    expect(wrapper.text()).toContain('Welcome to Assessors Studio')
-  })
-
-  it('has get started button on welcome step', () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    const buttons = wrapper.findAll('button')
-    expect(buttons.some(btn => btn.text().includes('Get Started'))).toBe(true)
-  })
-
-  it('shows admin creation step after clicking get started', async () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    // Manually advance to step 1 (simulating clicking "Get Started")
-    wrapper.vm.currentStep = 1
-    await nextTick()
-
-    // Check that we're on step 1 (admin creation step)
-    expect(wrapper.vm.currentStep).toBe(1)
-  })
-
-  it('has form validation on admin step', async () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    // Manually advance to step 1 (simulating clicking "Get Started")
-    wrapper.vm.currentStep = 1
-    await nextTick()
-
-    // Check that we're on step 1
-    expect(wrapper.vm.currentStep).toBe(1)
-    // Verify admin form exists
-    expect(wrapper.vm.adminForm).toBeDefined()
-    expect(wrapper.vm.adminForm.username).toBeDefined()
-  })
-
-  it('shows admin form fields', async () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    // Manually advance to step 1
-    wrapper.vm.currentStep = 1
-    await nextTick()
-
-    // Verify we're on step 1
-    expect(wrapper.vm.currentStep).toBe(1)
-    // Verify the admin form is present in component state
-    expect(wrapper.vm.adminForm.username).toBe('')
-    expect(wrapper.vm.adminForm.email).toBe('')
-    expect(wrapper.vm.adminForm.password).toBe('')
-  })
-
-  it('shows organization config step', async () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    const buttons = wrapper.findAll('button')
-    await buttons[0].trigger('click')
+  it('starts on the welcome step and Enter moves to the account step', async () => {
+    const w = mountView()
     await flushPromises()
-
-    const nextButtons = wrapper.findAll('button').filter(btn => btn.text().includes('Next'))
-    if (nextButtons.length > 0) {
-      await nextButtons[0].trigger('click')
-      await flushPromises()
-      expect(wrapper.text()).toContain('Configure Organization')
-    }
+    expect(w.vm.step).toBe(0)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect(w.vm.step).toBe(1)
   })
 
-  it('has organization name field', async () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    const buttons = wrapper.findAll('button')
-    await buttons[0].trigger('click')
+  it('stops listening for Enter once unmounted', async () => {
+    const w = mountView()
     await flushPromises()
-
-    const nextButtons = wrapper.findAll('button').filter(btn => btn.text().includes('Next'))
-    if (nextButtons.length > 0) {
-      await nextButtons[0].trigger('click')
-      await flushPromises()
-
-      const inputs = wrapper.findAll('input')
-      expect(inputs.length).toBeGreaterThan(0)
-    }
+    const vm = w.vm
+    w.unmount()
+    wrapper = undefined
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    expect(vm.step).toBe(0)
   })
 
-  it('has complete setup button', async () => {
-    const wrapper = mount(SetupView, {
-      global: { stubs: ElStubs }
-    })
-
-    const buttons = wrapper.findAll('button')
-    await buttons[0].trigger('click')
+  it('rejects a confirmation that does not match the password', async () => {
+    const w = mountView()
     await flushPromises()
+    await onAccountStep(w)
+    w.vm.form.confirmPassword = 'different'
+    const callback = vi.fn()
+    w.vm.validatePasswordMatch({}, w.vm.form.confirmPassword, callback)
+    expect(callback.mock.calls[0][0]).toBeInstanceOf(Error)
+  })
 
-    const nextButtons = wrapper.findAll('button').filter(btn => btn.text().includes('Next'))
-    if (nextButtons.length > 0) {
-      await nextButtons[0].trigger('click')
-      await flushPromises()
+  it('does not submit when form validation fails', async () => {
+    validateMock.mockRejectedValueOnce(new Error('invalid'))
+    const w = mountView()
+    await flushPromises()
+    await onAccountStep(w)
+    await w.vm.submitSetup()
+    expect(client.post).not.toHaveBeenCalled()
+    expect(w.vm.step).toBe(1)
+  })
 
-      const allButtons = wrapper.findAll('button')
-      expect(allButtons.some(btn => btn.text().includes('Complete Setup'))).toBe(true)
-    }
+  it('creates the admin without the confirmation field, signs in and moves on', async () => {
+    const w = mountView()
+    await flushPromises()
+    await onAccountStep(w)
+    await w.vm.submitSetup()
+    await flushPromises()
+    expect(client.post).toHaveBeenCalledWith('/setup', {
+      setupToken: 'token-from-log',
+      username: 'admin', email: 'admin@example.test', displayName: 'Admin', password: 'Str0ng-Passw0rd!',
+    })
+    expect(useAuthStore().user).toEqual(admin)
+    expect(markSetupDone).toHaveBeenCalled()
+    expect(w.vm.step).toBe(2)
+    expect(client.get).toHaveBeenCalledWith('/setup/standards-feed')
+  })
+
+  it('joins server validation details into one error and stays on the step', async () => {
+    vi.mocked(client.post).mockRejectedValueOnce({
+      response: { status: 400, data: { details: [{ message: 'Username taken' }, { message: 'Email invalid' }] } },
+    })
+    const w = mountView()
+    await flushPromises()
+    await onAccountStep(w)
+    await w.vm.submitSetup()
+    expect(w.vm.error).toBe('Username taken. Email invalid')
+    expect(w.vm.step).toBe(1)
+    expect(markSetupDone).not.toHaveBeenCalled()
+    expect(w.vm.loading).toBe(false)
+  })
+
+  it('shows the server message when the setup token is wrong', async () => {
+    vi.mocked(client.post).mockRejectedValueOnce({
+      response: { status: 403, data: { error: 'Invalid setup token', message: 'Enter the setup token shown in the server log.' } },
+    })
+    const w = mountView()
+    await flushPromises()
+    await onAccountStep(w)
+    await w.vm.submitSetup()
+    expect(w.vm.error).toBe('Enter the setup token shown in the server log.')
+    expect(w.vm.step).toBe(1)
+  })
+
+  it('falls back to the server error message', async () => {
+    vi.mocked(client.post).mockRejectedValueOnce({ response: { status: 409, data: { error: 'Setup already complete' } } })
+    const w = mountView()
+    await flushPromises()
+    await onAccountStep(w)
+    await w.vm.submitSetup()
+    expect(w.vm.error).toBe('Setup already complete')
   })
 })

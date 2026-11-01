@@ -1,0 +1,10 @@
+# Used by docker-compose.proxy.yml. SITE_ADDRESS comes from the environment.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	# Caddy sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host.
+	reverse_proxy app:3001
+	log {
+		output stdout
+		format json
+	}
+}

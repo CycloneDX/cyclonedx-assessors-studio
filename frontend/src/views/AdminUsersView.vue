@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import axios from 'axios'
+import client from '@/api/client'
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -197,7 +197,7 @@ const fetchUsers = async () => {
   loading.value = true
   error.value = ''
   try {
-    const response = await axios.get('/api/v1/users')
+    const response = await client.get('/users')
     users.value = response.data.data || []
   } catch (err: unknown) {
     error.value = apiErrorMessage(err, 'Failed to fetch users')
@@ -255,7 +255,7 @@ const handleDelete = async (row: Record<string, unknown>) => {
 
   saving.value = true
   try {
-    await axios.put(`/api/v1/users/${row.id as string}/deactivate`)
+    await client.put(`/users/${row.id as string}/deactivate`)
     ElMessage.success(t('common.success'))
     fetchUsers()
   } catch (err: unknown) {
@@ -286,7 +286,7 @@ const handleReactivate = async (row: Record<string, unknown>) => {
 
   saving.value = true
   try {
-    await axios.put(`/api/v1/users/${row.id as string}/activate`)
+    await client.put(`/users/${row.id as string}/activate`)
     ElMessage.success(t('admin.userActivated'))
     fetchUsers()
   } catch (err: unknown) {
@@ -317,14 +317,14 @@ const handleSave = async () => {
   saving.value = true
   try {
     if (isEditing.value) {
-      await axios.put(`/api/v1/users/${editingUserId.value}`, {
+      await client.put(`/users/${editingUserId.value}`, {
         email: form.value.email,
         displayName: form.value.displayName,
         role: form.value.role,
         isActive: form.value.isActive
       })
     } else {
-      await axios.post('/api/v1/users', {
+      await client.post('/users', {
         username: form.value.username,
         email: form.value.email,
         displayName: form.value.displayName,
@@ -361,10 +361,28 @@ const handleSelectionChange = (selection: Record<string, unknown>[]) => {
 const handleBulkDeactivate = async () => {
   if (selectedUsers.value.length === 0) return
 
+  // Same destructive confirm as single-user deactivate: one misclick
+  // here would lock out the whole selection.
+  const count = selectedUsers.value.length
+  try {
+    await ElMessageBox.confirm(
+      `Are you sure you want to deactivate ${count} selected ${count === 1 ? 'user' : 'users'}?`,
+      'Deactivate Users',
+      {
+        confirmButtonText: 'Deactivate',
+        cancelButtonText: 'Cancel',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+      }
+    )
+  } catch {
+    return
+  }
+
   saving.value = true
   try {
     const deactivatePromises = selectedUsers.value.map(user =>
-      axios.put(`/api/v1/users/${user.id as string}/deactivate`)
+      client.put(`/users/${user.id as string}/deactivate`)
     )
     await Promise.all(deactivatePromises)
     ElMessage.success(t('common.success'))
@@ -386,7 +404,7 @@ const handleBulkRoleChange = async () => {
   saving.value = true
   try {
     const updatePromises = selectedUsers.value.map(user =>
-      axios.put(`/api/v1/users/${user.id as string}`, {
+      client.put(`/users/${user.id as string}`, {
         role: bulkRoleChange.value
       })
     )

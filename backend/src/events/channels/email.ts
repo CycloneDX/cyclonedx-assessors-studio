@@ -293,7 +293,8 @@ export class EmailChannel implements NotificationChannel {
     if (type === ASSESSMENT_STATE_CHANGED) {
       const newState = data.newState as string | undefined;
       if (newState === 'in_review') return assessmentReadyForReviewTemplate(data, appUrl);
-      if (newState === 'completed') return assessmentCompletedTemplate(data, appUrl);
+      // The state is 'complete'; 'completed' is what older events carried.
+      if (newState === 'complete' || newState === 'completed') return assessmentCompletedTemplate(data, appUrl);
       return null;
     }
     if (type === EVIDENCE_CREATED) {
@@ -303,7 +304,10 @@ export class EmailChannel implements NotificationChannel {
       const newState = data.newState as string | undefined;
       if (newState === 'in_review') return evidenceReadyForReviewTemplate(data, appUrl);
       if (newState === 'claimed') return evidenceApprovedTemplate(data, appUrl);
-      if (newState === 'rejected') return evidenceRejectedTemplate(data, appUrl);
+      // A rejection sends evidence from in_review back to in_progress.
+      if (newState === 'rejected' || (newState === 'in_progress' && data.previousState === 'in_review')) {
+        return evidenceRejectedTemplate(data, appUrl);
+      }
       return null;
     }
     if (type === ATTESTATION_CREATED) {

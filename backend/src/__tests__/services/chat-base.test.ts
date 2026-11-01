@@ -38,8 +38,27 @@ vi.mock('../../config/index.js', () => ({
   }),
 }));
 
-// Mock fetch
+// Mock fetch. Delivery goes through safeFetch (pinned DNS, no redirects);
+// bridge it to the global fetch mock so these tests stay hermetic and keep
+// asserting on the request that would be sent.
 global.fetch = vi.fn();
+vi.mock('../../utils/safe-fetch.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/safe-fetch.js')>();
+  return {
+    ...actual,
+    safeFetch: vi.fn(async (url: string, opts: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number }) => {
+      try {
+        const r = await (global.fetch as unknown as (u: string, i: unknown) => Promise<{ status: number; ok: boolean }>)(
+          url, { method: opts.method, headers: opts.headers, body: opts.body },
+        );
+        return { status: r.status, ok: r.ok, text: '', truncated: false };
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') throw new Error(`Request timed out after ${opts.timeoutMs}ms`);
+        throw err;
+      }
+    }),
+  };
+});
 
 describe('BaseChatChannel', () => {
   let channel: TestChatChannel;

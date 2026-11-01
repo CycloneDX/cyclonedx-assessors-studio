@@ -1,5 +1,4 @@
 import { createI18n } from 'vue-i18n'
-import type { I18n } from 'vue-i18n'
 import enUS from './locales/en-US.json'
 
 export const AVAILABLE_LOCALES = [

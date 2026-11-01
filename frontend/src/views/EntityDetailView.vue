@@ -65,6 +65,14 @@
             </div>
           </el-col>
         </el-row>
+
+        <!-- Geo strip — only for location-bearing types -->
+        <div v-if="isGeoType(entity.entityType) && (entity.country || entity.region || entity.locality || entity.timezone)" class="geo-strip">
+          <span v-if="entity.locality" class="geo-item"><el-icon><Location /></el-icon> {{ entity.locality }}</span>
+          <span v-if="entity.region" class="geo-item geo-sep">{{ entity.region }}</span>
+          <span v-if="entity.country" class="geo-item geo-sep">{{ entity.country }}</span>
+          <span v-if="entity.timezone" class="geo-item geo-tz"><el-icon><Clock /></el-icon> {{ entity.timezone }}</span>
+        </div>
       </el-card>
 
       <!-- Tabs -->
@@ -344,6 +352,23 @@
         <el-form-item :label="t('common.tags')">
           <TagInput v-model="editForm.tags" />
         </el-form-item>
+        <template v-if="isGeoType(entity?.entityType)">
+          <el-divider content-position="left"><el-icon><Location /></el-icon> Location</el-divider>
+          <el-form-item label="Country">
+            <el-input v-model="editForm.country" placeholder="e.g. United States" />
+          </el-form-item>
+          <el-form-item label="Region">
+            <el-input v-model="editForm.region" placeholder="e.g. California, eu-west-1" />
+          </el-form-item>
+          <el-form-item label="City / Site">
+            <el-input v-model="editForm.locality" placeholder="e.g. San Francisco" />
+          </el-form-item>
+          <el-form-item label="Timezone">
+            <el-select v-model="editForm.timezone" filterable clearable placeholder="Select timezone" class="w-full">
+              <el-option v-for="tz in TIMEZONES" :key="tz" :label="tz" :value="tz" />
+            </el-select>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="showEditDialog = false">{{ t('common.cancel') }}</el-button>
@@ -456,10 +481,10 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowRight, Loading, Edit as EditIcon, ArrowDown, Delete, Grid, Share } from '@element-plus/icons-vue'
+import { ArrowRight, Loading, Edit as EditIcon, ArrowDown, Delete, Grid, Share, Location, Clock } from '@element-plus/icons-vue'
 import IconButton from '@/components/shared/IconButton.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import axios from 'axios'
+import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import StateBadge from '@/components/shared/StateBadge.vue'
 import TagInput from '@/components/shared/TagInput.vue'
@@ -519,11 +544,20 @@ const updatingPolicy = ref(false)
 const entitySearchLoading = ref(false)
 
 // Form data
+const GEO_TYPES = new Set(['organization', 'business_unit', 'team', 'service'])
+const isGeoType = (type?: string) => !!type && GEO_TYPES.has(type)
+
+const TIMEZONES = Intl.supportedValuesOf('timeZone')
+
 const editForm = ref({
   name: '',
   description: '',
   state: 'active',
   tags: [] as string[],
+  country: null as string | null,
+  region: null as string | null,
+  locality: null as string | null,
+  timezone: null as string | null,
 })
 
 const addRelationshipForm = ref({
@@ -771,7 +805,7 @@ const fetchRelationshipGraph = async () => {
 
 const fetchAvailableStandards = async () => {
   try {
-    const { data } = await axios.get('/api/v1/standards')
+    const { data } = await client.get('/standards')
     availableStandards.value = data.data || []
   } catch (err: unknown) {
     console.error('Failed to load standards:', err)
@@ -781,7 +815,7 @@ const fetchAvailableStandards = async () => {
 const searchEntities = async (query: string) => {
   entitySearchLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/entities', { params: { search: query || undefined, limit: 20 } })
+    const { data } = await client.get('/entities', { params: { search: query || undefined, limit: 20 } })
     searchResults.value = data.data || []
   } catch (err: unknown) {
     console.error('Failed to search entities:', err)
@@ -835,6 +869,10 @@ const openEditDialog = async () => {
     description: entity.value.description || '',
     state: entity.value.state,
     tags: entityTags.value.map((t: Tag) => t.name),
+    country: entity.value.country ?? null,
+    region: entity.value.region ?? null,
+    locality: entity.value.locality ?? null,
+    timezone: entity.value.timezone ?? null,
   }
   showEditDialog.value = true
 }
@@ -851,6 +889,12 @@ const saveEntity = async () => {
       description: editForm.value.description,
       state: editForm.value.state,
       tags: editForm.value.tags,
+      ...(isGeoType(entity.value?.entityType) ? {
+        country: editForm.value.country,
+        region: editForm.value.region,
+        locality: editForm.value.locality,
+        timezone: editForm.value.timezone,
+      } : {}),
     })
     ElMessage.success('Entity updated successfully')
     showEditDialog.value = false
@@ -864,7 +908,7 @@ const saveEntity = async () => {
 }
 
 const resetEditForm = () => {
-  editForm.value = { name: '', description: '', state: 'active', tags: [] }
+  editForm.value = { name: '', description: '', state: 'active', tags: [], country: null, region: null, locality: null, timezone: null }
 }
 
 // Actions - Archive Entity
@@ -947,7 +991,7 @@ const createAssessment = async () => {
   }
   assessmentCreating.value = true
   try {
-    await axios.post('/api/v1/assessments', {
+    await client.post('/assessments', {
       title: assessmentForm.value.title,
       description: assessmentForm.value.description || undefined,
       entityId: route.params.id,
@@ -1138,6 +1182,35 @@ const updatePolicyAction = async () => {
   display: flex;
   justify-content: flex-start;
   margin-top: var(--cat-spacing-4);
+}
+
+.geo-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cat-border-subtle);
+  color: var(--cat-text-secondary);
+  font-size: 0.83rem;
+  flex-wrap: wrap;
+
+  .el-icon { vertical-align: -2px; margin-right: 3px; }
+
+  .geo-sep::before {
+    content: '·';
+    margin-right: 6px;
+    opacity: 0.4;
+  }
+
+  .geo-tz {
+    margin-left: auto;
+    background: var(--cat-bg-hover);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: monospace;
+    font-size: 0.78rem;
+  }
 }
 
 .info-field {

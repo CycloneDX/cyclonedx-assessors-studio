@@ -379,17 +379,19 @@ test.describe('Entity lifecycle @regression', () => {
       expect(r.status()).toBe(403);
     });
 
-    test('all roles can read the entity list', async ({ apiAs }) => {
-      for (const role of [
-        'admin',
-        'assessor',
-        'assessee',
-        'standards_manager',
-        'standards_approver',
-      ] as const) {
+    test('roles with entities.view can read the entity list', async ({ apiAs }) => {
+      for (const role of ['admin', 'assessor', 'assessee'] as const) {
         const api = await apiAs(role);
         const r = await api.get('/api/v1/entities');
         expect(r.ok(), `${role} could not read /entities`).toBeTruthy();
+      }
+    });
+
+    test('standards roles cannot read the entity list (least privilege, 403)', async ({ apiAs }) => {
+      for (const role of ['standards_manager', 'standards_approver'] as const) {
+        const api = await apiAs(role);
+        const r = await api.get('/api/v1/entities');
+        expect(r.status(), `${role} read /entities`).toBe(403);
       }
     });
   });

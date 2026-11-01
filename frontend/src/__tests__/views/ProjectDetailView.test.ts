@@ -58,6 +58,26 @@ const mockProject = {
   dueDate: '2026-12-31',
 }
 
+const mockStats = {
+  assessmentCompletion: { total: 0, completed: 0, inProgress: 0, percent: 0 },
+  timeline: { projectDueDate: null, overdue: 0, upcomingDueDates: [] },
+  evidenceCoverage: { totalRequirements: 0, requirementsWithEvidence: 0, totalEvidenceItems: 0, percent: null },
+  conformance: { averageScore: null, assessments: [] },
+  warnings: [],
+}
+
+// The view fetches the project, its /stats dashboard, /scheduler, assessments and standards
+// on mount; route each URL to a payload of the right shape.
+function mockLoadedProject() {
+  vi.mocked(axios.get).mockImplementation((url: string) => {
+    if (url.endsWith('/stats')) return Promise.resolve({ data: mockStats })
+    if (url === '/scheduler') return Promise.resolve({ data: [] })
+    return Promise.resolve({
+      data: { project: mockProject, standards: [], tags: [], data: [] },
+    })
+  })
+}
+
 const stubs = {
   ElBreadcrumb: { template: '<div class="breadcrumb"><slot /></div>' },
   ElBreadcrumbItem: { template: '<span><slot /></span>', props: ['to'] },
@@ -97,9 +117,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('renders the view correctly', () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -115,7 +133,7 @@ describe('ProjectDetailView', () => {
       global: { stubs },
     })
 
-    expect(wrapper.find('.loading-container').exists()).toBe(true)
+    expect(wrapper.find('.loading-state').exists()).toBe(true)
   })
 
   it('shows error state when fetch fails', async () => {
@@ -138,9 +156,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('displays project information when loaded', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -152,9 +168,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('displays project name', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -162,13 +176,11 @@ describe('ProjectDetailView', () => {
 
     await flushPromises()
 
-    expect(wrapper.find('.project-detail-content').exists()).toBe(true)
+    expect(wrapper.find('.project-hero').exists()).toBe(true)
   })
 
   it('displays project description', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -180,9 +192,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('displays project state badge', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -197,9 +207,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('renders dashboard card', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -211,9 +219,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('renders project info card', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -221,13 +227,11 @@ describe('ProjectDetailView', () => {
 
     await flushPromises()
 
-    expect(wrapper.find('.project-info-card').exists()).toBe(true)
+    expect(wrapper.find('.kpi-ribbon').exists()).toBe(true)
   })
 
   it('displays dates when available', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -242,9 +246,7 @@ describe('ProjectDetailView', () => {
   })
 
   it('displays action buttons', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
-    })
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },
@@ -256,10 +258,39 @@ describe('ProjectDetailView', () => {
     expect(buttons.length).toBeGreaterThan(0)
   })
 
-  it('renders breadcrumb navigation', async () => {
-    vi.mocked(axios.get).mockResolvedValue({
-      data: { project: mockProject, standards: [], tags: [], data: [] },
+  it('downloads the project PDF report from the PDF export route', async () => {
+    mockLoadedProject()
+    const pdfBlob = new Blob(['%PDF-1.3'], { type: 'application/pdf' })
+    const getMock = vi.mocked(axios.get)
+    const defaultImpl = getMock.getMockImplementation()!
+    getMock.mockImplementation((url: string, config?: unknown) => {
+      if (url === '/export/project/test-id/pdf') return Promise.resolve({ data: pdfBlob })
+      return defaultImpl(url, config)
     })
+    const createObjectURL = vi.fn(() => 'blob:report')
+    const revokeObjectURL = vi.fn()
+    Object.assign(window.URL, { createObjectURL, revokeObjectURL })
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const wrapper = mount(ProjectDetailView, {
+      global: { stubs },
+    })
+    await flushPromises()
+
+    const pdfButton = wrapper.findAll('button').find((b) => b.text() === 'PDF Report')
+    expect(pdfButton).toBeDefined()
+    await pdfButton!.trigger('click')
+    await flushPromises()
+
+    expect(getMock).toHaveBeenCalledWith('/export/project/test-id/pdf', { responseType: 'blob' })
+    expect(getMock).not.toHaveBeenCalledWith(expect.stringContaining('/export/summary'), expect.anything())
+    expect(createObjectURL).toHaveBeenCalledWith(pdfBlob)
+    expect(clickSpy).toHaveBeenCalled()
+    clickSpy.mockRestore()
+  })
+
+  it('renders breadcrumb navigation', async () => {
+    mockLoadedProject()
 
     const wrapper = mount(ProjectDetailView, {
       global: { stubs },

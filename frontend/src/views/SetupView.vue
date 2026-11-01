@@ -4,7 +4,7 @@
       <!-- Step indicator -->
       <div class="setup-steps">
         <div
-          v-for="(s, i) in steps"
+          v-for="(_s, i) in steps"
           :key="i"
           class="step-dot"
           :class="{ active: i === step, completed: i < step }"
@@ -37,6 +37,16 @@
         </div>
 
         <el-form :model="form" :rules="rules" ref="formRef" label-position="top" class="setup-form">
+          <el-form-item :label="t('setup.setupToken')" prop="setupToken">
+            <el-input
+              v-model="form.setupToken"
+              :placeholder="t('setup.setupTokenPlaceholder')"
+              size="large"
+              :prefix-icon="LockIcon"
+              autocomplete="off"
+            />
+          </el-form-item>
+
           <el-form-item :label="t('setup.username')" prop="username">
             <el-input
               ref="usernameInputRef"
@@ -319,7 +329,8 @@ const feedItems = ref<FeedItem[]>([])
 const importComplete = ref(false)
 const importSuccessCount = ref(0)
 
-const demoChoice = ref<'yes' | 'no'>('yes')
+// Default off: demo records are sample data, opt in explicitly.
+const demoChoice = ref<'yes' | 'no'>('no')
 const demoLoading = ref(false)
 const demoError = ref('')
 const demoSuccess = ref(false)
@@ -356,6 +367,9 @@ onUnmounted(() => {
 })
 
 const form = reactive({
+  // One-time token from the server log; proves the person finishing
+  // setup controls this server (security review W3).
+  setupToken: '',
   username: '',
   email: '',
   displayName: '',
@@ -378,6 +392,9 @@ const validatePasswordMatch = (_rule: Record<string, unknown>, value: string, ca
 // always applies the current server policy even if the user opened
 // the setup page before the fetch completed.
 const rules = computed<FormRules>(() => ({
+  setupToken: [
+    { required: true, message: t('setup.validation.setupTokenRequired'), trigger: 'blur' },
+  ],
   username: [
     { required: true, message: t('setup.validation.usernameRequired'), trigger: 'blur' },
     { min: 3, max: 64, message: t('setup.validation.usernameLength'), trigger: 'blur' },
@@ -428,6 +445,7 @@ const submitSetup = async () => {
       user: User
       permissions?: string[]
     }>('/setup', {
+      setupToken: form.setupToken.trim(),
       username: form.username,
       email: form.email,
       displayName: form.displayName,

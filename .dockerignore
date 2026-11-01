@@ -1,0 +1,25 @@
+node_modules
+backend/node_modules
+frontend/node_modules
+backend/dist
+frontend/dist
+backend/data
+.git
+.env
+.env.local
+*.md
+# Docker only reads .dockerignore from the build-context root (the repo
+# root); it used to live in deploy/docker/ and was ignored, so the whole
+# tree went to the builder (security review W8).
+**/node_modules
+.claude
+**/coverage
+**/tmp-verify
+**/.env*
+data
+tests/e2e/test-results
+tests/e2e/playwright-report
+
+# Compose secrets must never enter an image
+deploy/docker/secrets
+deploy/docker/backups

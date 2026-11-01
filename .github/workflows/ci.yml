@@ -7,7 +7,7 @@
 #   - persist-credentials: false on every checkout
 #   - npm ci with frozen lockfile (no mutation)
 #   - No use of pull_request_target
-#   - No secret exposure to PR builds
+#   - No credential exposure to PR builds (history-guard reads one non-credential pattern secret)
 # =============================================================================
 
 name: CI
@@ -68,6 +68,11 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      # Unused files and dependencies (see knip.jsonc). Unused exports are
+      # not checked: module barrels and the event catalog export on purpose.
+      - name: Unused files and dependencies
+        run: npx --yes knip@6.41.0 --no-progress --include files,dependencies,unlisted,unresolved,binaries
+
       - name: Lint (if configured)
         run: |
           if [ -f .eslintrc.js ] || [ -f .eslintrc.json ] || [ -f .eslintrc.yml ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ]; then
@@ -79,7 +84,9 @@ jobs:
   backend-test:
     name: "Backend / Test"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The suite runs files serially (fileParallelism: false) with coverage;
+    # 2107 of ~2480 tests passed in the first 10 min of CI run #1.
+    timeout-minutes: 20
     needs: backend-build
     permissions:
       contents: read
@@ -161,6 +168,11 @@ jobs:
       - name: Typecheck
         run: npx vue-tsc -b
 
+      # Unused files and dependencies (see knip.jsonc). Unused exports are
+      # not checked: module barrels and the event catalog export on purpose.
+      - name: Unused files and dependencies
+        run: npx --yes knip@6.41.0 --no-progress --include files,dependencies,unlisted,unresolved,binaries
+
       - name: Lint (if configured)
         run: |
           if [ -f .eslintrc.js ] || [ -f .eslintrc.json ] || [ -f .eslintrc.yml ] || [ -f eslint.config.js ] || [ -f eslint.config.mjs ]; then
@@ -179,6 +191,36 @@ jobs:
           path: frontend/dist/
           retention-days: 5
           if-no-files-found: error
+
+  # Every frontend API call must go through src/api/client.ts (401/503
+  # handling). Runs the root ESLint config with complexity off: complexity
+  # is checked separately on changed files, not as a CI blocker.
+  # --no-inline-config so an eslint-disable comment cannot bypass the ban.
+  frontend-api-imports:
+    name: "Frontend / API import guard"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install lint dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Ban direct axios imports
+        run: npx eslint frontend/src --rule '{"complexity":"off"}' --no-inline-config
 
   frontend-test:
     name: "Frontend / Test"
@@ -229,8 +271,13 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e:
     name: "E2E / Playwright"
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Pinned: Playwright's WebKit build links against the image's ICU, and
+    # ubuntu-latest moving to 26.04 broke the browsers cached on 24.04.
+    runs-on: ubuntu-24.04
+    # A run without the browser cache spends 18-25 min downloading
+    # Chromium, Firefox and WebKit before the ~7 min suite starts; 25 min
+    # cancelled every cold run (first runs in a new repository).
+    timeout-minutes: 45
     needs: [backend-build, backend-test, frontend-build, frontend-test]
     permissions:
       contents: read
@@ -277,23 +324,36 @@ jobs:
           PW_VERSION=$(node -p "require('@playwright/test/package.json').version")
           echo "version=$PW_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Cache Playwright browsers
+      # Restore and save are separate steps so the browsers are cached as
+      # soon as they are downloaded. With the combined action the cache is
+      # saved only at the end of a successful job, so a cold run that timed
+      # out or failed never warmed it.
+      - name: Restore Playwright browsers
         id: pw-cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+          key: playwright-${{ runner.os }}-${{ env.ImageOS }}-${{ steps.pw-version.outputs.version }}
 
       - name: Install Playwright browsers and OS deps
         working-directory: tests/e2e
         # `--with-deps` ensures Ubuntu pulls the libs Chromium/WebKit need.
         # When the cache hit, only the OS deps step runs (fast).
+        env:
+          CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
         run: |
-          if [ "${{ steps.pw-cache.outputs.cache-hit }}" != 'true' ]; then
+          if [ "$CACHE_HIT" != 'true' ]; then
             npx playwright install --with-deps chromium firefox webkit
           else
             npx playwright install-deps chromium firefox webkit
           fi
+
+      - name: Save Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.ImageOS }}-${{ steps.pw-version.outputs.version }}
 
       - name: Typecheck e2e
         working-directory: tests/e2e
@@ -338,13 +398,22 @@ jobs:
     needs: [backend-test, frontend-test]
     permissions:
       contents: read
+    # Secrets cannot appear in an `if:` directly. Without a Codacy project
+    # token (this fork has none) the job skips its steps instead of failing.
+    env:
+      HAS_CODACY_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN != '' }}
 
     steps:
+      - name: Codacy not configured
+        if: env.HAS_CODACY_TOKEN != 'true'
+        run: echo "CODACY_PROJECT_TOKEN is not set; skipping the coverage upload."
+
       - name: Download backend coverage
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3  # v8.0.0
         with:
           name: backend-coverage
           path: backend-coverage
+        if: env.HAS_CODACY_TOKEN == 'true'
 
       - name: Download frontend coverage
         uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3  # v8.0.0
@@ -352,9 +421,11 @@ jobs:
           name: frontend-coverage
           path: frontend-coverage
         continue-on-error: true
+        if: env.HAS_CODACY_TOKEN == 'true'
 
       - name: Resolve coverage report paths
         id: coverage-paths
+        if: env.HAS_CODACY_TOKEN == 'true'
         run: |
           REPORTS=""
           if [ -f backend-coverage/lcov.info ]; then
@@ -370,7 +441,7 @@ jobs:
           echo "reports=$REPORTS" >> "$GITHUB_OUTPUT"
 
       - name: Upload coverage to Codacy
-        if: steps.coverage-paths.outputs.reports != ''
+        if: env.HAS_CODACY_TOKEN == 'true' && steps.coverage-paths.outputs.reports != ''
         uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699  # v1.3.0
         with:
           project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
@@ -379,9 +450,12 @@ jobs:
   # ---------------------------------------------------------------------------
   # Dependency review (PR only) - block PRs that introduce known vulns
   # ---------------------------------------------------------------------------
+  # GitHub only runs dependency review on a private repository with
+  # Advanced Security, so it is skipped while this repo is private;
+  # dependency-audit below covers known vulnerabilities either way.
   dependency-review:
     name: "Dependency Review"
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !github.event.repository.private
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -402,11 +476,83 @@ jobs:
           comment-summary-in-pr: always
 
   # ---------------------------------------------------------------------------
+  # Dependency audit - fail on high/critical advisories in production deps.
+  # Runs on every event and needs no GitHub Advanced Security.
+  # ---------------------------------------------------------------------------
+  dependency-audit:
+    name: "Dependency Audit"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [backend, frontend]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6.3.0
+        with:
+          node-version-file: .node-version
+
+      # Reads the committed lockfile; installs nothing.
+      - name: npm audit (production dependencies)
+        working-directory: ${{ matrix.workspace }}
+        run: npm audit --omit=dev --audit-level=high
+
+  # ---------------------------------------------------------------------------
+  # History guard - gitleaks over the commits this event adds, plus a check
+  # for names that must stay in this fork. The names come from the
+  # NAME_GUARD_REGEX secret so they never enter the repository; it is not a
+  # credential, and forks and upstream (no secret) skip that check.
+  # ---------------------------------------------------------------------------
+  history-guard:
+    name: "History Guard"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tarball"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      # push: the commits since the previous tip. pull_request: the PR's
+      # commits. workflow_dispatch: no base, so the whole history.
+      - name: Scan
+        env:
+          NAME_GUARD_REGEX: ${{ secrets.NAME_GUARD_REGEX }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash scripts/ci/history-guard.sh "$BASE_SHA" "$HEAD_SHA"
+
+  # ---------------------------------------------------------------------------
   # Docker snapshot (main branch only) - build and push snapshot image
   #
   # Publishes a single image that serves both the Vue 3 SPA and the
   # JSON API on the same origin:
-  #   cyclonedx/cyclonedx-assessors-studio:snapshot
+  #   ghcr.io/<owner>/<repo>:snapshot
   # ---------------------------------------------------------------------------
   docker:
     name: "Docker / Snapshot"
@@ -415,10 +561,11 @@ jobs:
     timeout-minutes: 30
     # Snapshot images may only be pushed once the full pipeline is green,
     # including E2E. Add e2e to the gate so a broken UI flow cannot be
-    # published to Docker Hub.
+    # published.
     needs: [backend-test, frontend-test, e2e]
     permissions:
       contents: read
+      packages: write
 
     steps:
       - name: Checkout
@@ -432,11 +579,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
 
-      - name: Log in to Docker Hub
+      # The fork publishes to its own GitHub Container Registry with the
+      # job's GITHUB_TOKEN; it never pushes to upstream's Docker Hub repo.
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4.1.0
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push snapshot image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
@@ -445,6 +595,8 @@ jobs:
           file: deploy/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: cyclonedx/cyclonedx-assessors-studio:snapshot
+          tags: ghcr.io/${{ github.repository }}:snapshot
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max

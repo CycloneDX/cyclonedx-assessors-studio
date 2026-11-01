@@ -5,7 +5,7 @@ description: Install Assessors Studio in Docker for evaluation or production, wi
 
 Assessors Studio is distributed as a single container image that serves both the Vue 3 single-page application and the JSON API on the same origin. This page covers the three supported deployment topologies: a quick-start evaluation install, a production install against PostgreSQL, and a reverse-proxy fronted deployment with TLS.
 
-The canonical image is `docker.io/cyclonedx/cyclonedx-assessors-studio`. Snapshot tags are published from the main branch; versioned tags are published from GitHub releases; `latest` tracks the most recent non-prerelease.
+The Compose files build the image from the repository by default (`cyclonedx-assessors-studio:local`). CI publishes this fork's image to GitHub Container Registry at `ghcr.io/<owner>/cyclonedx-assessors-studio`: `snapshot` from the main branch, versioned tags from GitHub releases, and `latest` for the most recent non-prerelease. Each published image carries build provenance and an SBOM. To run a published image, set `APP_IMAGE` (pinned by digest) and `APP_PULL_POLICY=always`.
 
 ## Quick start with PGlite
 
@@ -45,25 +45,31 @@ Download the production Compose file:
 curl -O https://raw.githubusercontent.com/CycloneDX/cyclonedx-assessors-studio/main/deploy/docker/docker-compose.production.yml
 ```
 
-Set at minimum `POSTGRES_PASSWORD` and `APP_IMAGE` (pinned to a specific snapshot tag for production; no stable release is available yet):
+Every credential is a Docker Compose secret, a file mounted at `/run/secrets/<name>`, never an environment variable, so none of them appears in `docker inspect` output or the process environment. Create the files once, next to the Compose file:
 
 ```bash
-export APP_IMAGE=cyclonedx/cyclonedx-assessors-studio:snapshot-20260412-abc1234
-export POSTGRES_PASSWORD=<generated-strong-password>
-docker compose -f docker-compose.production.yml up -d
+./init-secrets.sh
+docker compose -f docker-compose.production.yml up -d --build
 ```
 
-For multi-replica production, set `JWT_SECRET` explicitly so every replica signs with the same secret. A generated 32+ character random string is suitable:
+`init-secrets.sh` generates the database password, the encryption key, the JWT secret and the one-time setup token, and creates empty files for the optional SMTP, metrics and S3 credentials (fill them in when you enable those features). It never overwrites an existing file. The stack does not start while any secret file is missing.
 
-```bash
-JWT_SECRET=$(openssl rand -hex 32)
-```
+The setup wizard asks for the token in `secrets/setup_token`. Keep a copy of `secrets/master_encryption_key` somewhere safe and separate from your backups: without it, encrypted data cannot be read.
+
+On Docker Desktop for macOS, keep the deployment directory outside `~/Documents`, `~/Desktop` and `~/Downloads`; macOS privacy settings stop Docker from mounting files from those folders.
 
 If you manage the database outside of Docker (managed PostgreSQL service), remove the `db` service from the Compose file and point `DATABASE_URL` at your instance. Every setting driven by `DATABASE_URL` is documented on the [Environment Variables](/configuration/environment-variables/) page.
 
 ## Behind a reverse proxy
 
-Assessors Studio does not terminate TLS. For production you should place a reverse proxy in front of the container. Any proxy works: nginx, Caddy, Traefik, HAProxy, a cloud load balancer. The proxy responsibilities are:
+Assessors Studio does not terminate TLS. For production you should place a reverse proxy in front of the container. The repository ships a Caddy overlay that obtains and renews a certificate automatically:
+
+```bash
+SITE_ADDRESS=hub.example.com docker compose \
+  -f docker-compose.production.yml -f docker-compose.proxy.yml up -d
+```
+
+The production file sets `TRUST_PROXY_HOPS=1`, which is correct for one proxy. Any other proxy works too: nginx, Traefik, HAProxy, a cloud load balancer. The proxy responsibilities are:
 
 - Terminate TLS on port 443 with a valid certificate.
 - Forward decrypted traffic to the application on port 3001.
@@ -123,7 +129,7 @@ Check the health endpoint:
 curl http://localhost:3001/api/health
 ```
 
-A healthy instance returns `{"status":"ok"}`. The `/metrics` endpoint (when `METRICS_ENABLED=true`) exposes Prometheus metrics. Application logs stream to stdout in JSON format; capture them with your usual container log pipeline.
+A healthy instance returns `{"status":"healthy", ...}`. The `/metrics` endpoint (when `METRICS_ENABLED=true`) exposes Prometheus metrics. Application logs stream to stdout in JSON format; capture them with your usual container log pipeline.
 
 ## What to do next
 
@@ -134,4 +140,4 @@ After the container is healthy:
 3. Configure the notification channels your organization uses ([Integrations](/administration/integrations/)).
 4. Decide on storage for evidence ([Evidence Storage](/administration/storage/)).
 5. Enable encryption at rest if applicable ([Encryption at Rest](/administration/encryption-at-rest/)).
-6. Plan your first backup schedule ([Backup and Recovery](/administration/backup-and-recovery/)).
+6. Plan your first backup schedule ([Backup and Recovery](/administration/backup-and-recovery/)). `deploy/docker/backup.sh` and `restore.sh` cover the Compose deployment; rehearse a restore into a scratch deployment periodically.

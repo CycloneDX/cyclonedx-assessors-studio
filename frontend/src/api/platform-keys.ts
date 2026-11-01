@@ -40,13 +40,6 @@ export async function listPlatformKeys(): Promise<PlatformKeyPublic[]> {
   return data.data
 }
 
-export async function getActivePlatformKey(): Promise<PlatformKeyPublic> {
-  const { data } = await client.get<{ data: PlatformKeyPublic }>(
-    '/admin/platform-keys/active',
-  )
-  return data.data
-}
-
 export async function rotatePlatformKey(
   algorithm?: PlatformKeyAlgorithm,
 ): Promise<PlatformKeyPublic> {

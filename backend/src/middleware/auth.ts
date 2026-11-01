@@ -18,6 +18,11 @@ export interface AuthRequest extends Request {
   };
   requestId?: string;
   eventBus?: EventBus;
+  // How the caller authenticated on this request. Set by requireAuth /
+  // requireSession. Handlers can gate sensitive branches (e.g. final
+  // assessment state transitions) on 'session' so that programmatic
+  // API keys cannot reach them even when the route otherwise accepts a key.
+  authMethod?: 'session' | 'apikey';
 }
 
 const config = getConfig();
@@ -87,7 +92,7 @@ async function authenticateCookie(req: AuthRequest): Promise<AuthRequest['user']
 
   let decoded: Record<string, unknown>;
   try {
-    decoded = jwt.verify(token, config.JWT_SECRET) as Record<string, unknown>;
+    decoded = jwt.verify(token, config.JWT_SECRET, { algorithms: ['HS256'] }) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -145,7 +150,8 @@ export async function requireAuth(
   try {
     // Try API key first (programmatic access), then fall back to cookie
     // (browser session).
-    const user = await authenticateApiKey(req) ?? await authenticateCookie(req);
+    const apiKeyUser = await authenticateApiKey(req);
+    const user = apiKeyUser ?? await authenticateCookie(req);
 
     if (!user) {
       res.status(401).json({ error: 'Authentication required. Provide a session cookie or X-Api-Key header.' });
@@ -153,9 +159,53 @@ export async function requireAuth(
     }
 
     req.user = user;
+    req.authMethod = apiKeyUser ? 'apikey' : 'session';
     next();
   } catch (error) {
     logger.error('Authentication error', {
+      error,
+      requestId: req.requestId,
+    });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+/**
+ * Like requireAuth, but rejects programmatic API-key callers. Use this on
+ * endpoints that must only be driven from an interactive browser session:
+ * credential management, audit-log reads, bulk import/export, and other
+ * high-blast-radius operations that no machine integration should perform.
+ *
+ * A caller presenting an X-Api-Key header gets 403 (their credential is
+ * valid but not permitted here); a caller with no credentials gets 401.
+ */
+export async function requireSession(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    // An X-Api-Key header is an explicit programmatic attempt. Reject it
+    // before touching the cookie so the 403 is unambiguous, even if a
+    // session cookie also happens to be present on the request.
+    if (req.headers['x-api-key']) {
+      res.status(403).json({
+        error: 'This endpoint requires an interactive session and cannot be used with an API key.',
+      });
+      return;
+    }
+
+    const user = await authenticateCookie(req);
+    if (!user) {
+      res.status(401).json({ error: 'Authentication required. Sign in to continue.' });
+      return;
+    }
+
+    req.user = user;
+    req.authMethod = 'session';
+    next();
+  } catch (error) {
+    logger.error('Session authentication error', {
       error,
       requestId: req.requestId,
     });

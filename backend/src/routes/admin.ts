@@ -15,54 +15,18 @@ import { asyncHandler } from '../utils/route-helpers.js';
 const router = Router();
 
 /**
- * GET /api/v1/admin/integrations/storage
- *
- * Returns the current storage provider configuration. Access keys
- * are never exposed; only a "configured" boolean is returned.
- */
-router.get(
-  '/integrations/storage',
-  requireAuth,
-  requirePermission('admin.settings'),
-  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
-    const config = getConfig();
-    const providerName = getStorageProviderName();
-
-    // biome-ignore lint/suspicious/noExplicitAny: Storage config structure varies by provider
-    const result: Record<string, unknown> = {
-      provider: providerName,
-    };
-
-    if (providerName === 's3') {
-      result.s3 = {
-        bucket: config.S3_BUCKET,
-        region: config.S3_REGION,
-        endpoint: config.S3_ENDPOINT || null,
-        accessKeyConfigured: !!config.S3_ACCESS_KEY_ID,
-        forcePathStyle: config.S3_FORCE_PATH_STYLE,
-      };
-    }
-
-    result.maxFileSize = config.UPLOAD_MAX_FILE_SIZE;
-
-    res.json(result);
-  })
-);
-
-/**
  * POST /api/v1/admin/integrations/test/storage
  *
- * Performs a round-trip write/read test to verify the storage backend
- * is functioning correctly.
+ * Verifies the storage backend is reachable.
  *
- * For database: inserts and reads a small temporary attachment row.
+ * For database: reads from the evidence_attachment table that holds the bytes.
  * For S3: writes and reads a small test object in the configured bucket.
  */
 router.post(
   '/integrations/test/storage',
   requireAuth,
   requirePermission('admin.settings'),
-  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  asyncHandler(async (_req: AuthRequest, res: Response): Promise<void> => {
     const providerName = getStorageProviderName();
 
     if (providerName === 's3') {
@@ -79,17 +43,12 @@ router.post(
         });
       }
     } else {
-      // Database provider: verify a small round-trip write/read
+      // Database provider: attachment bytes live in evidence_attachment,
+      // so read from that table to prove it is reachable.
       const db = getDatabase();
-      const _testId = `_storage-test-${Date.now()}`;
 
       try {
-        // Write a small value using a raw query
-        await db.executeQuery({
-          sql: `SELECT 1 AS result`,
-          parameters: [],
-          // biome-ignore lint/suspicious/noExplicitAny: Kysely executeQuery requires CompiledQuery
-        } as any);
+        await db.selectFrom('evidence_attachment').select('id').limit(1).execute();
 
         res.json({
           success: true,
@@ -112,32 +71,6 @@ router.post(
 // ---------------------------------------------------------------------------
 // SMTP / Email integrations
 // ---------------------------------------------------------------------------
-
-/**
- * GET /api/v1/admin/integrations/smtp
- *
- * Returns the current SMTP configuration (read only). Passwords are
- * never exposed; only a "configured" boolean is returned.
- */
-router.get(
-  '/integrations/smtp',
-  requireAuth,
-  requirePermission('admin.settings'),
-  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
-    const config = getConfig();
-
-    res.json({
-      enabled: config.SMTP_ENABLED,
-      host: config.SMTP_HOST || null,
-      port: config.SMTP_PORT,
-      secure: config.SMTP_SECURE,
-      from: config.SMTP_FROM || null,
-      userConfigured: !!config.SMTP_USER,
-      passConfigured: !!config.SMTP_PASS,
-      tlsRejectUnauthorized: config.SMTP_TLS_REJECT_UNAUTHORIZED,
-    });
-  })
-);
 
 /**
  * POST /api/v1/admin/integrations/test/smtp
@@ -204,7 +137,7 @@ router.get(
   '/integrations/status',
   requireAuth,
   requirePermission('admin.settings'),
-  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  asyncHandler(async (_req: AuthRequest, res: Response): Promise<void> => {
     const config = getConfig();
     const providerName = getStorageProviderName();
 

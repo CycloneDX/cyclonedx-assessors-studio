@@ -116,7 +116,7 @@ async function assessmentIsTerminal(
  * the caller can fall through to the regular 404 path; there is no
  * benefit to a 409 on a phantom id.
  */
-export async function isAttestationImmutable(
+async function isAttestationImmutable(
   db: Kysely<Database>,
   attestationId: string,
 ): Promise<AttestationImmutableResult> {
@@ -143,7 +143,7 @@ export async function isAttestationImmutable(
 /**
  * Determine whether a claim is retention-locked.
  */
-export async function isClaimImmutable(
+async function isClaimImmutable(
   db: Kysely<Database>,
   claimId: string,
 ): Promise<ClaimImmutableResult> {

@@ -160,100 +160,374 @@
   ],
   "entities": [
     {
-      "id": "00000000-0000-4000-a100-000000000001",
-      "name": "Acme Inc",
-      "description": "Top level organization for all Acme business units, products, and teams.",
-      "entity_type": "organization",
-      "state": "active",
-      "bom_ref": "org-acme-inc"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000002",
-      "name": "Acme Product Engineering",
-      "description": "Division responsible for product development and engineering across all Acme product lines.",
-      "entity_type": "business_unit",
-      "state": "active",
-      "bom_ref": "bu-acme-product-engineering"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000003",
-      "name": "Acme IT",
-      "description": "Corporate IT services including infrastructure, networking, and internal tools.",
-      "entity_type": "business_unit",
-      "state": "active",
-      "bom_ref": "bu-acme-it"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000004",
-      "name": "Acme Security",
-      "description": "Enterprise security team responsible for governance, risk, and compliance.",
+      "id": "02cd0fb6-7cc1-437a-80a5-a4cca5bf9d6b",
+      "name": "Accounting Operations",
       "entity_type": "team",
-      "state": "active",
-      "bom_ref": "team-acme-security"
+      "description": "Managing accounts payable, receivable, and core ledgers",
+      "country": "India",
+      "region": "Asia",
+      "locality": "Bengaluru",
+      "timezone": "Asia/Kolkata"
     },
     {
       "id": "00000000-0000-4000-a100-000000000005",
       "name": "Acme Compliance",
-      "description": "Regulatory compliance team managing standards adherence and audit preparation.",
       "entity_type": "team",
-      "state": "active",
-      "bom_ref": "team-acme-compliance"
+      "description": "Regulatory compliance team managing standards adherence and audit preparation.",
+      "country": "United States",
+      "region": "New York",
+      "locality": "New York",
+      "timezone": "America/New_York"
     },
     {
-      "id": "00000000-0000-4000-a100-000000000006",
-      "name": "Supplier A",
-      "description": "Third party supplier providing critical software components to Acme product lines.",
-      "entity_type": "organization",
-      "state": "active",
-      "bom_ref": "org-supplier-a"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000007",
-      "name": "Product A",
-      "description": "Acme's flagship SaaS platform for enterprise customers.",
-      "entity_type": "product",
-      "state": "active",
-      "bom_ref": "product-a"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000008",
-      "name": "Product A v2.1",
-      "description": "Current production release of Product A.",
-      "entity_type": "product_version",
-      "state": "active",
-      "bom_ref": "product-a-v2.1"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000009",
-      "name": "Auth Service",
-      "description": "Authentication and authorization microservice used across Acme products.",
-      "entity_type": "component",
-      "state": "active",
-      "bom_ref": "component-auth-service"
-    },
-    {
-      "id": "00000000-0000-4000-a100-000000000010",
-      "name": "Payment Gateway",
-      "description": "Payment processing component integrated with third party payment providers.",
-      "entity_type": "component",
-      "state": "active",
-      "bom_ref": "component-payment-gateway"
+      "id": "00000000-0000-4000-a100-000000000003",
+      "name": "Acme IT",
+      "entity_type": "business_unit",
+      "description": "Corporate IT services including infrastructure, networking, and internal tools.",
+      "country": "United States",
+      "region": "Texas",
+      "locality": "Austin",
+      "timezone": "America/Chicago"
     },
     {
       "id": "00000000-0000-4000-a100-000000000012",
       "name": "Acme Identity Platform",
-      "description": "SaaS identity and access management service provided to enterprise customers.",
       "entity_type": "service",
-      "state": "active",
-      "bom_ref": "service-acme-identity"
+      "description": "SaaS identity and access management service provided to enterprise customers.",
+      "country": "United States",
+      "region": "California",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000001",
+      "name": "Acme Inc",
+      "entity_type": "organization",
+      "description": "Top level organization for all Acme business units, products, and teams.",
+      "country": "United States",
+      "region": "California",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000002",
+      "name": "Acme Product Engineering",
+      "entity_type": "business_unit",
+      "description": "Division responsible for product development and engineering across all Acme product lines.",
+      "country": "United States",
+      "region": "Washington",
+      "locality": "Seattle",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000004",
+      "name": "Acme Security",
+      "entity_type": "team",
+      "description": "Enterprise security team responsible for governance, risk, and compliance.",
+      "country": "United States",
+      "region": "Washington DC",
+      "locality": "Washington",
+      "timezone": "America/New_York"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000009",
+      "name": "Auth Service",
+      "entity_type": "component",
+      "description": "Authentication and authorization microservice used across Acme products.",
+      "country": null,
+      "region": null,
+      "locality": null,
+      "timezone": null
+    },
+    {
+      "id": "2a6c0dec-f164-4778-a84b-4dd095a39a9f",
+      "name": "Corporate Communications",
+      "entity_type": "team",
+      "description": "Overseeing public relations and internal alignment messaging",
+      "country": "United States",
+      "region": "North America",
+      "locality": "New York",
+      "timezone": "America/New_York"
+    },
+    {
+      "id": "cd14ddd3-4d36-452c-a7ad-8f54470ed692",
+      "name": "Customer Success",
+      "entity_type": "business_unit",
+      "description": "Ensuring client satisfaction, retention, and post-sale support",
+      "country": "Australia",
+      "region": "Asia Pacific",
+      "locality": "Sydney",
+      "timezone": "Australia/Sydney"
+    },
+    {
+      "id": "44e9f003-9c17-4230-9502-41ae8a98cf81",
+      "name": "Cybersecurity",
+      "entity_type": "team",
+      "description": "Protecting enterprise digital assets, networks, and identity boundaries",
+      "country": "Israel",
+      "region": "Middle East",
+      "locality": "Tel Aviv",
+      "timezone": "Asia/Jerusalem"
+    },
+    {
+      "id": "db36c7f9-be8b-43f2-b1a0-c511e96300eb",
+      "name": "Data & Analytics",
+      "entity_type": "business_unit",
+      "description": "Centralized business intelligence, reporting, and data governance",
+      "country": "Netherlands",
+      "region": "Europe",
+      "locality": "Amsterdam",
+      "timezone": "Europe/Amsterdam"
+    },
+    {
+      "id": "948c1e7c-d6c9-4bdb-8078-582e28b58f81",
+      "name": "Digital Marketing & Growth",
+      "entity_type": "team",
+      "description": "Managing online campaigns, analytics, and digital acquisition",
+      "country": "Ireland",
+      "region": "Europe",
+      "locality": "Dublin",
+      "timezone": "Europe/Dublin"
+    },
+    {
+      "id": "df6c1390-ba1a-4738-ac96-c456b551d6be",
+      "name": "Employee Relations",
+      "entity_type": "team",
+      "description": "Workplace policy enforcement and internal conflict resolution",
+      "country": "Canada",
+      "region": "North America",
+      "locality": "Toronto",
+      "timezone": "America/Toronto"
+    },
+    {
+      "id": "3f354256-fb83-4ac5-8ad7-1e99719d37f5",
+      "name": "Enterprise Sales",
+      "entity_type": "team",
+      "description": "Handling large-scale corporate accounts and high-value contracts",
+      "country": "Germany",
+      "region": "Europe",
+      "locality": "Munich",
+      "timezone": "Europe/Berlin"
+    },
+    {
+      "id": "438da096-7230-4562-9897-f089fd6439f3",
+      "name": "Executive Leadership",
+      "entity_type": "business_unit",
+      "description": "C-suite executives dictating overall company strategy",
+      "country": "United States",
+      "region": "North America",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "7afc5d36-fb16-4f30-8e30-1e3f026bb027",
+      "name": "Finance & Accounting",
+      "entity_type": "business_unit",
+      "description": "Management of corporate capital and financial compliance",
+      "country": "United Kingdom",
+      "region": "Europe",
+      "locality": "London",
+      "timezone": "Europe/London"
+    },
+    {
+      "id": "495c9cd7-174b-4942-991a-a023796fd5d0",
+      "name": "Financial Planning & Analysis",
+      "entity_type": "team",
+      "description": "Corporate budgeting, forecasting, and financial modeling",
+      "country": "United Kingdom",
+      "region": "Europe",
+      "locality": "London",
+      "timezone": "Europe/London"
+    },
+    {
+      "id": "4323f198-37b8-4969-961c-d15e803ad692",
+      "name": "Headquarters",
+      "entity_type": "organization",
+      "description": "Executive leadership and central corporate governance",
+      "country": "United States",
+      "region": "North America",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "0199174d-b9a4-480a-a8f0-0e42abccdff7",
+      "name": "Human Resources",
+      "entity_type": "business_unit",
+      "description": "Management of the employee lifecycle and corporate culture",
+      "country": "United States",
+      "region": "North America",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "6e5bc529-df38-407b-b9c5-9840b3427437",
+      "name": "IT Helpdesk",
+      "entity_type": "team",
+      "description": "Internal technical support and hardware deployment for staff",
+      "country": "Philippines",
+      "region": "Asia",
+      "locality": "Manila",
+      "timezone": "Asia/Manila"
+    },
+    {
+      "id": "328df570-8fde-4681-9b86-0211ac07860d",
+      "name": "Information Technology",
+      "entity_type": "business_unit",
+      "description": "Management of internal technical infrastructure and software",
+      "country": "United States",
+      "region": "North America",
+      "locality": "Seattle",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "523356ba-4948-4069-bfb0-4c85d0a01caa",
+      "name": "Infrastructure & Cloud Ops",
+      "entity_type": "team",
+      "description": "Maintaining corporate networks, servers, and cloud environments",
+      "country": "United States",
+      "region": "North America",
+      "locality": "Seattle",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "7048759e-5b10-441b-a210-26b906d26720",
+      "name": "Legal & Compliance",
+      "entity_type": "business_unit",
+      "description": "Managing corporate risk, contracts, and regulatory obligations",
+      "country": "United States",
+      "region": "North America",
+      "locality": "New York",
+      "timezone": "America/New_York"
+    },
+    {
+      "id": "3d91b1b8-e5d9-4312-802c-de6a66ee3ee5",
+      "name": "Marketing",
+      "entity_type": "business_unit",
+      "description": "Driving brand awareness, market positioning, and lead generation",
+      "country": "United States",
+      "region": "North America",
+      "locality": "New York",
+      "timezone": "America/New_York"
+    },
+    {
+      "id": "d0466ebb-093c-4f71-af19-bdd8943c02c8",
+      "name": "Operations & Facilities",
+      "entity_type": "business_unit",
+      "description": "Overseeing daily physical business execution and corporate facilities",
+      "country": "United States",
+      "region": "North America",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000010",
+      "name": "Payment Gateway",
+      "entity_type": "component",
+      "description": "Payment processing component integrated with third party payment providers.",
+      "country": null,
+      "region": null,
+      "locality": null,
+      "timezone": null
+    },
+    {
+      "id": "38a84a02-3d5d-4f13-80ed-d86436e86ebf",
+      "name": "Procurement",
+      "entity_type": "team",
+      "description": "Sourcing and purchasing corporate assets, software, and vendor contracts",
+      "country": "Singapore",
+      "region": "Asia",
+      "locality": "Singapore",
+      "timezone": "Asia/Singapore"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000007",
+      "name": "Product A",
+      "entity_type": "product",
+      "description": "Acme's flagship SaaS platform for enterprise customers.",
+      "country": null,
+      "region": null,
+      "locality": null,
+      "timezone": null
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000008",
+      "name": "Product A v2.1",
+      "entity_type": "product_version",
+      "description": "Current production release of Product A.",
+      "country": null,
+      "region": null,
+      "locality": null,
+      "timezone": null
+    },
+    {
+      "id": "3d40d3e5-8402-475d-a3bf-9663ce29d896",
+      "name": "Research & Development",
+      "entity_type": "business_unit",
+      "description": "Designing, engineering, and building core products or services",
+      "country": "United States",
+      "region": "North America",
+      "locality": "San Francisco",
+      "timezone": "America/Los_Angeles"
+    },
+    {
+      "id": "18cfd40f-3cb3-4b85-8868-bc3ecbb7f20e",
+      "name": "Sales",
+      "entity_type": "business_unit",
+      "description": "Directly generating corporate revenue through client acquisition",
+      "country": "United States",
+      "region": "North America",
+      "locality": "Chicago",
+      "timezone": "America/Chicago"
+    },
+    {
+      "id": "0208501f-01a7-4361-a2b9-c61fbda0a267",
+      "name": "Sales Operations",
+      "entity_type": "team",
+      "description": "Managing CRM data, sales pipelines, and performance metrics",
+      "country": "United States",
+      "region": "North America",
+      "locality": "Chicago",
+      "timezone": "America/Chicago"
     },
     {
       "id": "00000000-0000-4000-a100-000000000013",
       "name": "SecureAudit Partners",
-      "description": "Independent third party security assessment firm specializing in SDLC and compliance audits.",
       "entity_type": "organization",
-      "state": "active",
-      "bom_ref": "org-secureaudit-partners"
+      "description": "Independent third party security assessment firm specializing in SDLC and compliance audits.",
+      "country": "United Kingdom",
+      "region": "England",
+      "locality": "London",
+      "timezone": "Europe/London"
+    },
+    {
+      "id": "00000000-0000-4000-a100-000000000006",
+      "name": "Supplier A",
+      "entity_type": "organization",
+      "description": "Third party supplier providing critical software components to Acme product lines.",
+      "country": "Canada",
+      "region": "Ontario",
+      "locality": "Toronto",
+      "timezone": "America/Toronto"
+    },
+    {
+      "id": "b7c27472-5398-49fe-8a7d-684599ffa162",
+      "name": "Talent Acquisition",
+      "entity_type": "team",
+      "description": "Recruiting, interviewing, and onboarding new hires",
+      "country": "United Kingdom",
+      "region": "Europe",
+      "locality": "London",
+      "timezone": "Europe/London"
+    },
+    {
+      "id": "659e6481-f11b-422b-92ad-3fb4fd647d78",
+      "name": "Total Rewards",
+      "entity_type": "team",
+      "description": "Managing payroll, compensation structures, and employee benefits",
+      "country": "United States",
+      "region": "North America",
+      "locality": "Austin",
+      "timezone": "America/Chicago"
     }
   ],
   "entity_relationships": [
@@ -373,6 +647,36 @@
       "name": "Supplier Due Diligence Q1 2026",
       "description": "Quarterly supplier security assessment to evaluate third party component providers.",
       "state": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c100-000000000001",
+      "name": "Cloud Platform Security Program",
+      "description": "Security assessment program for Acme cloud infrastructure, Kubernetes, and IAM.",
+      "state": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c100-000000000002",
+      "name": "Mobile Application Security",
+      "description": "MASVS-aligned assessments and pen-test prep for Acme mobile apps and their APIs.",
+      "state": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c100-000000000003",
+      "name": "Third-Party Vendor Risk",
+      "description": "Security due-diligence and SSDF attestation review for key suppliers.",
+      "state": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c100-000000000004",
+      "name": "Data Privacy & Compliance",
+      "description": "GDPR data-mapping and privacy-control assessments across data domains.",
+      "state": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c100-000000000005",
+      "name": "IoT Firmware Security",
+      "description": "Supply-chain and device-level security assessments for IoT firmware.",
+      "state": "new"
     }
   ],
   "project_tags": [
@@ -445,17 +749,19 @@
       "entity_id": "00000000-0000-4000-a100-000000000007",
       "standard_id": "__FIRST_STANDARD__",
       "state": "in_progress",
+      "assessment_type": "standards",
       "start_date": "2026-01-15T00:00:00Z",
       "due_date": "2026-03-31T00:00:00Z"
     },
     {
       "id": "00000000-0000-4000-b400-000000000002",
-      "title": "Auth Service ASVS Assessment",
-      "description": "Focused ASVS assessment of the authentication service component.",
+      "title": "Auth Service — Targeted ASVS Review",
+      "description": "Targeted ASVS assessment of the authentication service. Cherry-picks only the authentication, session management, and cryptography requirements relevant to the Auth Service scope.",
       "project_id": "00000000-0000-4000-b100-000000000001",
       "entity_id": "00000000-0000-4000-a100-000000000009",
-      "standard_id": "__FIRST_STANDARD__",
+      "standard_id": null,
       "state": "new",
+      "assessment_type": "targeted",
       "start_date": null,
       "due_date": "2026-06-30T00:00:00Z"
     },
@@ -467,6 +773,7 @@
       "entity_id": "00000000-0000-4000-a100-000000000006",
       "standard_id": "__SECOND_STANDARD__",
       "state": "pending",
+      "assessment_type": "standards",
       "start_date": "2026-02-01T00:00:00Z",
       "due_date": "2026-04-15T00:00:00Z"
     },
@@ -478,8 +785,179 @@
       "entity_id": "00000000-0000-4000-a100-000000000006",
       "standard_id": "__SSDF_STANDARD__",
       "state": "complete",
+      "assessment_type": "standards",
       "start_date": "2025-11-01T00:00:00Z",
       "due_date": "2026-02-28T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-b400-000000000004",
+      "title": "Auth Service Pen Test Prep",
+      "description": "Pre-engagement task assessment to organise scoping documents, credentials, and stakeholder sign-offs before the Q2 penetration test of the Auth Service begins.",
+      "project_id": "00000000-0000-4000-b100-000000000001",
+      "entity_id": "00000000-0000-4000-a100-000000000009",
+      "standard_id": null,
+      "state": "in_progress",
+      "assessment_type": "tasks",
+      "task_label": "Pen Test Prep",
+      "start_date": "2026-06-01T00:00:00Z",
+      "due_date": "2026-07-15T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-b400-000000000005",
+      "title": "Payment Gateway Sign-off Review",
+      "description": "Collect final stakeholder sign-offs and gather remaining evidence artifacts before closing the Payment Gateway compliance cycle.",
+      "project_id": "00000000-0000-4000-b100-000000000001",
+      "entity_id": "00000000-0000-4000-a100-000000000010",
+      "standard_id": null,
+      "state": "new",
+      "assessment_type": "tasks",
+      "task_label": "Sign-off Review",
+      "start_date": null,
+      "due_date": "2026-07-31T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000001",
+      "title": "Cloud Infra CIS Benchmark Review",
+      "description": "CIS Benchmark review of Acme cloud infrastructure baseline.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "entity_id": "00000000-0000-4000-a100-000000000012",
+      "standard_id": null,
+      "state": "in_progress",
+      "assessment_type": "targeted",
+      "start_date": "2026-06-01T00:00:00Z",
+      "due_date": "2026-08-15T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000002",
+      "title": "Kubernetes Hardening Assessment",
+      "description": "Cluster hardening review against CIS Kubernetes Benchmark.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "entity_id": "00000000-0000-4000-a100-000000000009",
+      "standard_id": null,
+      "state": "complete",
+      "assessment_type": "tasks",
+      "start_date": "2026-04-01T00:00:00Z",
+      "due_date": "2026-05-30T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000003",
+      "title": "Cloud IAM Access Review",
+      "description": "Least-privilege and role review of cloud IAM.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "entity_id": "00000000-0000-4000-a100-000000000012",
+      "standard_id": null,
+      "state": "new",
+      "assessment_type": "targeted",
+      "start_date": "2026-09-01T00:00:00Z",
+      "due_date": "2026-10-31T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000004",
+      "title": "Mobile App MASVS Assessment",
+      "description": "MASVS-L1 assessment of the Acme mobile client.",
+      "project_id": "00000000-0000-4000-c100-000000000002",
+      "entity_id": "00000000-0000-4000-a100-000000000010",
+      "standard_id": "__FIRST_STANDARD__",
+      "state": "in_progress",
+      "assessment_type": "standards",
+      "start_date": "2026-06-15T00:00:00Z",
+      "due_date": "2026-09-15T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000005",
+      "title": "Mobile API Pen Test Prep",
+      "description": "Scoping and evidence gathering for mobile API penetration test.",
+      "project_id": "00000000-0000-4000-c100-000000000002",
+      "entity_id": "00000000-0000-4000-a100-000000000010",
+      "standard_id": null,
+      "state": "pending",
+      "assessment_type": "tasks",
+      "start_date": "2026-08-01T00:00:00Z",
+      "due_date": "2026-09-30T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000006",
+      "title": "Vendor B Security Questionnaire",
+      "description": "Security due-diligence questionnaire review for Vendor B.",
+      "project_id": "00000000-0000-4000-c100-000000000003",
+      "entity_id": "00000000-0000-4000-a100-000000000003",
+      "standard_id": null,
+      "state": "complete",
+      "assessment_type": "tasks",
+      "start_date": "2026-05-01T00:00:00Z",
+      "due_date": "2026-06-20T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000007",
+      "title": "Vendor B SSDF Attestation Review",
+      "description": "Review of Vendor B CycloneDX SSDF attestation package.",
+      "project_id": "00000000-0000-4000-c100-000000000003",
+      "entity_id": "00000000-0000-4000-a100-000000000003",
+      "standard_id": "__SECOND_STANDARD__",
+      "state": "pending",
+      "assessment_type": "standards",
+      "start_date": "2026-09-15T00:00:00Z",
+      "due_date": "2026-11-15T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000008",
+      "title": "Vendor C Onboarding Review",
+      "description": "Initial security onboarding review for Vendor C.",
+      "project_id": "00000000-0000-4000-c100-000000000003",
+      "entity_id": "00000000-0000-4000-a100-000000000003",
+      "standard_id": null,
+      "state": "new",
+      "assessment_type": "targeted",
+      "start_date": "2026-10-01T00:00:00Z",
+      "due_date": "2026-11-30T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000009",
+      "title": "GDPR Data Mapping Assessment",
+      "description": "Data-flow mapping and lawful-basis review for customer data.",
+      "project_id": "00000000-0000-4000-c100-000000000004",
+      "entity_id": "db36c7f9-be8b-43f2-b1a0-c511e96300eb",
+      "standard_id": null,
+      "state": "in_progress",
+      "assessment_type": "targeted",
+      "start_date": "2026-06-10T00:00:00Z",
+      "due_date": "2026-08-31T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000010",
+      "title": "Privacy Controls Review",
+      "description": "Review of privacy-by-design controls and DSAR handling.",
+      "project_id": "00000000-0000-4000-c100-000000000004",
+      "entity_id": "db36c7f9-be8b-43f2-b1a0-c511e96300eb",
+      "standard_id": null,
+      "state": "complete",
+      "assessment_type": "tasks",
+      "start_date": "2026-03-15T00:00:00Z",
+      "due_date": "2026-05-15T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000011",
+      "title": "Firmware Supply Chain Assessment",
+      "description": "SBOM and provenance review for IoT device firmware.",
+      "project_id": "00000000-0000-4000-c100-000000000005",
+      "entity_id": "00000000-0000-4000-a100-000000000009",
+      "standard_id": null,
+      "state": "in_progress",
+      "assessment_type": "targeted",
+      "start_date": "2026-06-20T00:00:00Z",
+      "due_date": "2026-09-30T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c400-000000000012",
+      "title": "IoT Device Pen Test",
+      "description": "Hardware and firmware penetration test of reference device.",
+      "project_id": "00000000-0000-4000-c100-000000000005",
+      "entity_id": "00000000-0000-4000-a100-000000000009",
+      "standard_id": null,
+      "state": "new",
+      "assessment_type": "tasks",
+      "start_date": "2026-11-01T00:00:00Z",
+      "due_date": "2026-12-20T00:00:00Z"
     }
   ],
   "assessment_assessors": [
@@ -505,6 +983,62 @@
     },
     {
       "assessment_id": "00000000-0000-4000-b400-100000000001",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-b400-000000000004",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-b400-000000000005",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000001",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000002",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000003",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000004",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000005",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000006",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000007",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000008",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000009",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000010",
+      "user_id": "00000000-0000-4000-8000-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000011",
+      "user_id": "00000000-0000-4000-8000-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000012",
       "user_id": "00000000-0000-4000-8000-000000000003"
     }
   ],
@@ -564,7 +1098,7 @@
       "id": "00000000-0000-4000-b500-000000000002",
       "name": "SAST Scan Results",
       "description": "Static application security testing results from SonarQube for Product A codebase.",
-      "state": "in_progress",
+      "state": "expired",
       "author_id": "00000000-0000-4000-8000-000000000004",
       "reviewer_id": null,
       "is_counter_evidence": false,
@@ -911,6 +1445,138 @@
       "is_counter_evidence": false,
       "classification": "internal",
       "expires_on": "2027-03-31T00:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000001",
+      "name": "CIS Cloud Baseline Scan",
+      "description": "Automated CIS baseline scan output for cloud accounts.",
+      "state": "claimed",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "reviewer_id": "00000000-0000-4000-8000-000000000003",
+      "is_counter_evidence": false,
+      "classification": "internal",
+      "expires_on": "2027-06-01"
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000002",
+      "name": "K8s Hardening Checklist",
+      "description": "Completed CIS Kubernetes hardening checklist.",
+      "state": "claimed",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "reviewer_id": "00000000-0000-4000-8000-000000000003",
+      "is_counter_evidence": false,
+      "classification": "internal",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000003",
+      "name": "K8s Network Policy Config",
+      "description": "Exported network policy manifests showing default-deny.",
+      "state": "in_review",
+      "author_id": "00000000-0000-4000-8000-000000000004",
+      "reviewer_id": "00000000-0000-4000-8000-000000000002",
+      "is_counter_evidence": false,
+      "classification": "confidential",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000004",
+      "name": "MASVS Test Results",
+      "description": "Static and dynamic analysis results for mobile client.",
+      "state": "in_progress",
+      "author_id": "00000000-0000-4000-8000-000000000005",
+      "reviewer_id": null,
+      "is_counter_evidence": false,
+      "classification": "confidential",
+      "expires_on": "2027-01-15"
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000005",
+      "name": "Mobile Cert Pinning Proof",
+      "description": "Screenshots and logs demonstrating TLS certificate pinning.",
+      "state": "in_progress",
+      "author_id": "00000000-0000-4000-8000-000000000005",
+      "reviewer_id": null,
+      "is_counter_evidence": false,
+      "classification": "internal",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000006",
+      "name": "Vendor B SIG Questionnaire",
+      "description": "Completed Standardized Information Gathering questionnaire.",
+      "state": "claimed",
+      "author_id": "00000000-0000-4000-8000-000000000003",
+      "reviewer_id": "00000000-0000-4000-8000-000000000002",
+      "is_counter_evidence": false,
+      "classification": "confidential",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000007",
+      "name": "Vendor B SOC 2 Report",
+      "description": "Vendor B SOC 2 Type II report (2026).",
+      "state": "claimed",
+      "author_id": "00000000-0000-4000-8000-000000000003",
+      "reviewer_id": "00000000-0000-4000-8000-000000000002",
+      "is_counter_evidence": false,
+      "classification": "restricted",
+      "expires_on": "2027-03-31"
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000008",
+      "name": "GDPR Data Flow Diagram",
+      "description": "Data-flow diagram covering customer PII processing.",
+      "state": "in_review",
+      "author_id": "00000000-0000-4000-8000-000000000004",
+      "reviewer_id": "00000000-0000-4000-8000-000000000003",
+      "is_counter_evidence": false,
+      "classification": "confidential",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000009",
+      "name": "DSAR Runbook",
+      "description": "Data-subject access request handling runbook.",
+      "state": "claimed",
+      "author_id": "00000000-0000-4000-8000-000000000004",
+      "reviewer_id": "00000000-0000-4000-8000-000000000003",
+      "is_counter_evidence": false,
+      "classification": "internal",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000010",
+      "name": "Firmware SBOM",
+      "description": "CycloneDX SBOM for reference device firmware build.",
+      "state": "claimed",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "reviewer_id": "00000000-0000-4000-8000-000000000003",
+      "is_counter_evidence": false,
+      "classification": "internal",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000011",
+      "name": "Firmware Signing Logs",
+      "description": "Build logs showing signed firmware artifacts.",
+      "state": "in_progress",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "reviewer_id": null,
+      "is_counter_evidence": false,
+      "classification": "confidential",
+      "expires_on": null
+    },
+    {
+      "id": "00000000-0000-4000-c500-000000000012",
+      "name": "Privacy Control Matrix",
+      "description": "Mapping of privacy controls to processing activities.",
+      "state": "expired",
+      "author_id": "00000000-0000-4000-8000-000000000004",
+      "reviewer_id": "00000000-0000-4000-8000-000000000003",
+      "is_counter_evidence": false,
+      "classification": "internal",
+      "expires_on": "2026-06-15"
     }
   ],
   "evidence_tags": [
@@ -1322,7 +1988,8 @@
       "target": "Product A v2.1",
       "predicate": "All user authentication flows enforce multi factor authentication and follow OWASP ASVS Level 2 requirements for credential management.",
       "reasoning": "Based on penetration test results and MFA configuration evidence, Product A meets or exceeds ASVS authentication requirements.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Under Review"
     },
     {
       "id": "00000000-0000-4000-b600-000000000002",
@@ -1330,7 +1997,8 @@
       "target": "Product A v2.1 Legacy Auth",
       "predicate": "The legacy authentication flow is vulnerable to session fixation attacks, which could allow an attacker to hijack user sessions.",
       "reasoning": "Identified during penetration testing. The legacy flow does not regenerate session tokens after authentication.",
-      "is_counter_claim": true
+      "is_counter_claim": true,
+      "status": "Under Review"
     },
     {
       "id": "00000000-0000-4000-b600-000000000003",
@@ -1338,7 +2006,8 @@
       "target": "Supplier A",
       "predicate": "Supplier A has implemented and maintains security controls consistent with SOC 2 Type II trust service criteria for security, availability, and confidentiality.",
       "reasoning": "Supported by Supplier A's current SOC 2 Type II report and independent auditor opinion.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Under Review"
     },
     {
       "id": "00000000-0000-4000-b600-100000000101",
@@ -1346,7 +2015,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Security requirements are documented in comprehensive requirements document",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.1.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000102",
@@ -1354,7 +2024,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Software security requirements are defined and maintained in requirements database",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.1.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000103",
@@ -1362,7 +2033,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Third-party requirements are communicated via procurement policy",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.1.3, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000104",
@@ -1370,7 +2042,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "SDLC roles are defined and documented in role definition document",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.2.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000105",
@@ -1378,7 +2051,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Security training completion records show annual training for all personnel",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.2.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000106",
@@ -1386,7 +2060,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Management commitment demonstrated through security policy and budget allocation",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.2.3, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000107",
@@ -1394,7 +2069,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Toolchain components are specified in tool requirements documentation",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.3.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000108",
@@ -1402,7 +2078,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Tools are deployed and maintained following security best practices",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.3.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000109",
@@ -1410,7 +2087,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Tools are configured to generate security artifacts per organization standards",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.3.3, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000110",
@@ -1418,7 +2096,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Security gates are defined with documented criteria",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.4.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000111",
@@ -1426,7 +2105,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Gate criteria are reviewed quarterly and updated as needed",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.4.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000112",
@@ -1434,7 +2114,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Development environment hardening policy is documented",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.5.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000113",
@@ -1442,7 +2123,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Environment configuration is monitored and enforced via tooling",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PO.5.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000114",
@@ -1450,7 +2132,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Source code access control configured with MFA and branch protection",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PS.1.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000115",
@@ -1458,7 +2141,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Build artifacts are signed using GPG keys",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PS.2.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000116",
@@ -1466,7 +2150,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Release archives are created and stored in secure artifact repository",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PS.3.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000117",
@@ -1474,7 +2159,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Provenance records are maintained but incomplete for some OSS components",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PS.3.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000118",
@@ -1482,7 +2168,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Provenance data for a subset of OSS dependencies is derived heuristically rather than captured at build time, so a downstream consumer cannot deterministically reproduce every component in the SBOM.",
       "reasoning": "Counter-claim captured during the SSDF assessment of practice task PS.3.2: the gap is understood and tracked in the remediation plan cited in the requirement mitigation.",
-      "is_counter_claim": true
+      "is_counter_claim": true,
+      "status": "Rejected"
     },
     {
       "id": "00000000-0000-4000-b600-100000000119",
@@ -1490,7 +2177,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Threat model created using STRIDE methodology for Product A",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.1.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000120",
@@ -1498,7 +2186,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Threat analysis results documented with identified risks and mitigations",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.1.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000121",
@@ -1506,7 +2195,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Security review of design decisions tracked against threat model during architecture reviews",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.1.3, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000122",
@@ -1514,7 +2204,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Design documents reviewed against security requirements checklist",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.2.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000123",
@@ -1522,7 +2213,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Third party components are evaluated for security before adoption",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.4.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000124",
@@ -1530,7 +2222,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Component integrity is verified via checksum and signature checking",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.4.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000125",
@@ -1538,7 +2231,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Third party component verification is automated for most components with manual gaps for niche dependencies",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.4.4, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000126",
@@ -1546,7 +2240,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Automated verification coverage excludes internal mirrors and vendored dependencies, leaving a small tail of components whose integrity is validated only by manual spot check.",
       "reasoning": "Counter-claim captured during the SSDF assessment of practice task PW.4.4: the gap is understood and tracked in the remediation plan cited in the requirement mitigation.",
-      "is_counter_claim": true
+      "is_counter_claim": true,
+      "status": "Rejected"
     },
     {
       "id": "00000000-0000-4000-b600-100000000127",
@@ -1554,7 +2249,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Coding standards require use of well secured and hardened libraries",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.5.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000128",
@@ -1562,7 +2258,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Compiler hardening flags enabled per documented build configuration",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.6.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000129",
@@ -1570,7 +2267,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Build configuration produces reproducible artifacts via locked toolchain versions",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.6.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000130",
@@ -1578,7 +2276,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Source code review policy requires peer review before merge",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.7.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000131",
@@ -1586,7 +2285,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Automated code analysis runs on every pull request",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.7.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000132",
@@ -1594,7 +2294,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Test plans include negative cases for known abuse patterns",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.8.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000133",
@@ -1602,7 +2303,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Penetration testing is performed annually by external third party",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.8.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000134",
@@ -1610,7 +2312,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Default installation configurations are hardened per documented baseline",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.9.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000135",
@@ -1618,7 +2321,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Configuration verification runs as part of release acceptance",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task PW.9.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000136",
@@ -1626,7 +2330,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Vulnerability disclosure program operates with documented SLAs for triage",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.1.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000137",
@@ -1634,7 +2339,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Continuous monitoring of open source components for new vulnerability disclosures",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.1.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000138",
@@ -1642,7 +2348,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Vulnerability severity is triaged within 48 hours of disclosure using CVSS plus business impact scoring",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.1.3, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000139",
@@ -1650,7 +2357,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Vulnerability remediation SLA enforced with tracking by severity band",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.2.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000140",
@@ -1658,7 +2366,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Root cause analysis performed on every confirmed vulnerability",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.2.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000141",
@@ -1666,7 +2375,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Incident response playbook covers security-related software defects",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.3.1, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000142",
@@ -1674,7 +2384,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "RCA findings are documented but pattern analysis is mostly manual",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.3.2, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000143",
@@ -1682,7 +2393,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Pattern analysis across RCA records relies on analyst review rather than automated correlation, so systemic trends surface only when a reviewer happens to spot them.",
       "reasoning": "Counter-claim captured during the SSDF assessment of practice task RV.3.2: the gap is understood and tracked in the remediation plan cited in the requirement mitigation.",
-      "is_counter_claim": true
+      "is_counter_claim": true,
+      "status": "Rejected"
     },
     {
       "id": "00000000-0000-4000-b600-100000000144",
@@ -1690,7 +2402,8 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Retrospective reviews feed lessons learned into SDLC policy updates on a quarterly cadence",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.3.3, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
     },
     {
       "id": "00000000-0000-4000-b600-100000000145",
@@ -1698,7 +2411,116 @@
       "target": "Acme Corporation SDLC",
       "predicate": "Information sharing agreements with supply chain partners cover coordinated vulnerability disclosure",
       "reasoning": "Claim asserted by the external assessor for SSDF practice task RV.3.4, supported by evidence collected during the assessment window.",
-      "is_counter_claim": false
+      "is_counter_claim": false,
+      "status": "Accepted"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000001",
+      "name": "Cloud baseline meets CIS Level 1",
+      "target": "Acme Cloud Infrastructure",
+      "predicate": "The cloud account baseline conforms to CIS Benchmark Level 1 for all in-scope services.",
+      "reasoning": "CIS baseline scan shows no Level 1 failures.",
+      "is_counter_claim": false,
+      "status": "Under Review"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000002",
+      "name": "Kubernetes clusters enforce default-deny networking",
+      "target": "Acme Kubernetes Platform",
+      "predicate": "All namespaces enforce default-deny network policies with explicit allow-lists.",
+      "reasoning": "Network policy manifests reviewed and verified in-cluster.",
+      "is_counter_claim": false,
+      "status": "Accepted"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000003",
+      "name": "K8s workloads run as non-root",
+      "target": "Acme Kubernetes Platform",
+      "predicate": "Pod security standards prevent privileged and root container execution.",
+      "reasoning": "Hardening checklist and admission policy confirm enforcement.",
+      "is_counter_claim": false,
+      "status": "Accepted"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000004",
+      "name": "Mobile client pins TLS certificates",
+      "target": "Acme Mobile Client",
+      "predicate": "The mobile client pins server certificates and rejects untrusted chains.",
+      "reasoning": "Certificate pinning proof pending full review.",
+      "is_counter_claim": false,
+      "status": "Under Review"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000005",
+      "name": "Mobile client stores no secrets on device",
+      "target": "Acme Mobile Client",
+      "predicate": "No credentials or tokens are persisted in insecure device storage.",
+      "reasoning": "MASVS test results under analysis.",
+      "is_counter_claim": false,
+      "status": "Draft"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000006",
+      "name": "Vendor B maintains SOC 2 controls",
+      "target": "Vendor B",
+      "predicate": "Vendor B maintains an unqualified SOC 2 Type II control environment.",
+      "reasoning": "SOC 2 report and SIG questionnaire reviewed.",
+      "is_counter_claim": false,
+      "status": "Accepted"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000007",
+      "name": "Vendor B questionnaire has coverage gaps",
+      "target": "Vendor B",
+      "predicate": "The vendor questionnaire omits evidence for encryption-at-rest controls.",
+      "reasoning": "Counter-claim raised during due-diligence review.",
+      "is_counter_claim": true,
+      "status": "Rejected"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000008",
+      "name": "Customer PII flows are mapped and lawful",
+      "target": "Acme Data Platform",
+      "predicate": "All customer PII processing activities are mapped to a documented lawful basis.",
+      "reasoning": "Data-flow diagram under review.",
+      "is_counter_claim": false,
+      "status": "Under Review"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000009",
+      "name": "DSAR requests are handled within SLA",
+      "target": "Acme Data Platform",
+      "predicate": "Data-subject access requests are fulfilled within the 30-day regulatory window.",
+      "reasoning": "DSAR runbook approved; metrics pending.",
+      "is_counter_claim": false,
+      "status": "Under Review"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000010",
+      "name": "Firmware artifacts are signed",
+      "target": "Acme IoT Firmware",
+      "predicate": "All released firmware artifacts are cryptographically signed and verified at boot.",
+      "reasoning": "Signing logs and SBOM provided.",
+      "is_counter_claim": false,
+      "status": "Under Review"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000011",
+      "name": "Firmware SBOM is complete",
+      "target": "Acme IoT Firmware",
+      "predicate": "The firmware SBOM enumerates all third-party components with versions.",
+      "reasoning": "CycloneDX SBOM attached.",
+      "is_counter_claim": false,
+      "status": "Draft"
+    },
+    {
+      "id": "00000000-0000-4000-c600-000000000012",
+      "name": "Privacy-by-design controls are implemented",
+      "target": "Acme Data Platform",
+      "predicate": "Privacy-by-design controls are implemented across data-processing services.",
+      "reasoning": "Privacy control matrix approved.",
+      "is_counter_claim": false,
+      "status": "Accepted"
     }
   ],
   "claim_evidence": [
@@ -1965,6 +2787,50 @@
     {
       "claim_id": "00000000-0000-4000-b600-100000000145",
       "evidence_id": "00000000-0000-4000-b500-100000000017"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000001",
+      "evidence_id": "00000000-0000-4000-c500-000000000001"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000002",
+      "evidence_id": "00000000-0000-4000-c500-000000000003"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000003",
+      "evidence_id": "00000000-0000-4000-c500-000000000002"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000004",
+      "evidence_id": "00000000-0000-4000-c500-000000000005"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000006",
+      "evidence_id": "00000000-0000-4000-c500-000000000007"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000006",
+      "evidence_id": "00000000-0000-4000-c500-000000000006"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000008",
+      "evidence_id": "00000000-0000-4000-c500-000000000008"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000009",
+      "evidence_id": "00000000-0000-4000-c500-000000000009"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000010",
+      "evidence_id": "00000000-0000-4000-c500-000000000011"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000010",
+      "evidence_id": "00000000-0000-4000-c500-000000000010"
+    },
+    {
+      "claim_id": "00000000-0000-4000-c600-000000000012",
+      "evidence_id": "00000000-0000-4000-c500-000000000012"
     }
   ],
   "claim_counter_evidence": [
@@ -2663,69 +3529,6 @@
       }
     }
   ],
-  "dashboards": [
-    {
-      "id": "00000000-0000-4000-b800-000000000001",
-      "name": "Security Overview",
-      "description": "High level view of assessment progress, evidence status, and compliance posture.",
-      "owner_id": "__ADMIN_USER__",
-      "is_default": true,
-      "is_shared": true,
-      "layout": [
-        {
-          "i": "w1",
-          "x": 0,
-          "y": 0,
-          "w": 4,
-          "h": 2,
-          "type": "stat-card",
-          "config": {
-            "metric": "assessments_in_progress"
-          }
-        },
-        {
-          "i": "w2",
-          "x": 4,
-          "y": 0,
-          "w": 4,
-          "h": 2,
-          "type": "stat-card",
-          "config": {
-            "metric": "evidence_pending_review"
-          }
-        },
-        {
-          "i": "w3",
-          "x": 8,
-          "y": 0,
-          "w": 4,
-          "h": 2,
-          "type": "stat-card",
-          "config": {
-            "metric": "overdue_assessments"
-          }
-        },
-        {
-          "i": "w4",
-          "x": 0,
-          "y": 2,
-          "w": 6,
-          "h": 4,
-          "type": "assessment-progress",
-          "config": {}
-        },
-        {
-          "i": "w5",
-          "x": 6,
-          "y": 2,
-          "w": 6,
-          "h": 4,
-          "type": "recent-activity",
-          "config": {}
-        }
-      ]
-    }
-  ],
   "ssdf_assessment_data": {
     "assessment_requirements": [
       {
@@ -2735,7 +3538,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000001"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Security requirements are documented in comprehensive requirements document",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.1.2",
@@ -2744,7 +3551,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000001"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Software security requirements are defined and maintained in requirements database",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.1.3",
@@ -2753,7 +3564,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000001"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Third-party requirements are communicated via procurement policy",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.2.1",
@@ -2762,7 +3577,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000007"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "SDLC roles are defined and documented in role definition document",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.2.2",
@@ -2771,7 +3590,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000007"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Security training completion records show annual training for all personnel",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.2.3",
@@ -2780,7 +3603,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000024"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Management commitment demonstrated through security policy and budget allocation",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.3.1",
@@ -2789,7 +3616,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000005"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Toolchain components are specified in tool requirements documentation",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.3.2",
@@ -2798,7 +3629,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000005"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Tools are deployed and maintained following security best practices",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.3.3",
@@ -2808,7 +3643,11 @@
           "00000000-0000-4000-b500-100000000005",
           "00000000-0000-4000-b500-100000000010"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Tools are configured to generate security artifacts per organization standards",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.4.1",
@@ -2817,7 +3656,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000008"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Security gates are defined with documented criteria",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.4.2",
@@ -2827,7 +3670,11 @@
           "00000000-0000-4000-b500-100000000008",
           "00000000-0000-4000-b500-100000000028"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Gate criteria are reviewed quarterly and updated as needed",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.5.1",
@@ -2837,7 +3684,11 @@
           "00000000-0000-4000-b500-100000000019",
           "00000000-0000-4000-b500-100000000022"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Development environment hardening policy is documented",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PO.5.2",
@@ -2846,7 +3697,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000019"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Environment configuration is monitored and enforced via tooling",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "PS.1.1",
@@ -2855,7 +3710,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000013"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Source code access control configured with MFA and branch protection",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PS.2.1",
@@ -2864,7 +3723,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000014"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Build artifacts are signed using GPG keys",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "PS.3.1",
@@ -2873,7 +3736,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000018"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Release archives are created and stored in secure artifact repository",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PS.3.2",
@@ -2882,7 +3749,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000023"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 0.65,
+        "conformance_rationale": "Provenance records are maintained but incomplete for some OSS components",
+        "confidence_score": 0.8,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "PW.1.1",
@@ -2891,7 +3762,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000002"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Threat model created using STRIDE methodology for Product A",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.1.2",
@@ -2900,7 +3775,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000002"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Threat analysis results documented with identified risks and mitigations",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.1.3",
@@ -2910,7 +3789,11 @@
           "00000000-0000-4000-b500-100000000011",
           "00000000-0000-4000-b500-100000000002"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Security review of design decisions tracked against threat model during architecture reviews",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.2.1",
@@ -2919,7 +3802,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000011"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Design documents reviewed against security requirements checklist",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.4.1",
@@ -2929,7 +3816,11 @@
           "00000000-0000-4000-b500-100000000010",
           "00000000-0000-4000-b500-100000000020"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Third party components are evaluated for security before adoption",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.4.2",
@@ -2939,7 +3830,11 @@
           "00000000-0000-4000-b500-100000000025",
           "00000000-0000-4000-b500-100000000014"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Component integrity is verified via checksum and signature checking",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "PW.4.4",
@@ -2949,7 +3844,11 @@
           "00000000-0000-4000-b500-100000000025",
           "00000000-0000-4000-b500-100000000010"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 0.65,
+        "conformance_rationale": "Third party component verification is automated for most components with manual gaps for niche dependencies",
+        "confidence_score": 0.8,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "PW.5.1",
@@ -2959,7 +3858,11 @@
           "00000000-0000-4000-b500-100000000022",
           "00000000-0000-4000-b500-100000000006"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Coding standards require use of well secured and hardened libraries",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.6.1",
@@ -2968,7 +3871,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000012"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Compiler hardening flags enabled per documented build configuration",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.6.2",
@@ -2978,7 +3885,11 @@
           "00000000-0000-4000-b500-100000000012",
           "00000000-0000-4000-b500-100000000005"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Build configuration produces reproducible artifacts via locked toolchain versions",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "PW.7.1",
@@ -2987,7 +3898,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000006"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Source code review policy requires peer review before merge",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.7.2",
@@ -2997,7 +3912,11 @@
           "00000000-0000-4000-b500-100000000003",
           "00000000-0000-4000-b500-100000000006"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Automated code analysis runs on every pull request",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.8.1",
@@ -3007,7 +3926,11 @@
           "00000000-0000-4000-b500-100000000004",
           "00000000-0000-4000-b500-100000000009"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Test plans include negative cases for known abuse patterns",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.8.2",
@@ -3016,7 +3939,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000009"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Penetration testing is performed annually by external third party",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.9.1",
@@ -3026,7 +3953,11 @@
           "00000000-0000-4000-b500-100000000019",
           "00000000-0000-4000-b500-100000000022"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Default installation configurations are hardened per documented baseline",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "PW.9.2",
@@ -3036,7 +3967,11 @@
           "00000000-0000-4000-b500-100000000019",
           "00000000-0000-4000-b500-100000000008"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Configuration verification runs as part of release acceptance",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "RV.1.1",
@@ -3046,7 +3981,11 @@
           "00000000-0000-4000-b500-100000000017",
           "00000000-0000-4000-b500-100000000015"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Vulnerability disclosure program operates with documented SLAs for triage",
+        "confidence_score": 0.95,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "RV.1.2",
@@ -3056,7 +3995,11 @@
           "00000000-0000-4000-b500-100000000015",
           "00000000-0000-4000-b500-100000000010"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Continuous monitoring of open source components for new vulnerability disclosures",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "RV.1.3",
@@ -3065,7 +4008,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000015"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Vulnerability severity is triaged within 48 hours of disclosure using CVSS plus business impact scoring",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "RV.2.1",
@@ -3075,7 +4022,11 @@
           "00000000-0000-4000-b500-100000000026",
           "00000000-0000-4000-b500-100000000015"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Vulnerability remediation SLA enforced with tracking by severity band",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "RV.2.2",
@@ -3085,7 +4036,11 @@
           "00000000-0000-4000-b500-100000000021",
           "00000000-0000-4000-b500-100000000016"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Root cause analysis performed on every confirmed vulnerability",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "RV.3.1",
@@ -3094,7 +4049,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000016"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Incident response playbook covers security-related software defects",
+        "confidence_score": 0.9,
+        "confidence_rationale": "Based on comprehensive evidence review and assessment team expertise."
       },
       {
         "requirement_identifier": "RV.3.2",
@@ -3103,7 +4062,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000021"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 0.65,
+        "conformance_rationale": "RCA findings are documented but pattern analysis is mostly manual",
+        "confidence_score": 0.8,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "RV.3.3",
@@ -3113,7 +4076,11 @@
           "00000000-0000-4000-b500-100000000021",
           "00000000-0000-4000-b500-100000000028"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Retrospective reviews feed lessons learned into SDLC policy updates on a quarterly cadence",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       },
       {
         "requirement_identifier": "RV.3.4",
@@ -3122,7 +4089,11 @@
         "evidence_ids": [
           "00000000-0000-4000-b500-100000000017"
         ],
-        "work_notes": []
+        "work_notes": [],
+        "conformance_score": 1.0,
+        "conformance_rationale": "Information sharing agreements with supply chain partners cover coordinated vulnerability disclosure",
+        "confidence_score": 0.85,
+        "confidence_rationale": "Assessment identifies some gaps that may require further validation."
       }
     ],
     "attestation": {
@@ -3620,5 +4591,405 @@
         "target_completion": "2026-08-31T00:00:00Z"
       }
     ]
-  }
+  },
+  "mitigations": [
+    {
+      "id": "00000000-0000-4000-c800-000000000001",
+      "mitigation_id": "MIT-0001",
+      "title": "Enforce CIS baseline via IaC guardrails",
+      "type": "Technical",
+      "category": "Preventive",
+      "priority": "High",
+      "status": "Implemented",
+      "effectiveness": "Effective",
+      "description": "Codify CIS baseline as policy-as-code in the cloud pipeline.",
+      "owner": "Cloud Platform Team"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000002",
+      "mitigation_id": "MIT-0002",
+      "title": "Rollout default-deny network policies",
+      "type": "Technical",
+      "category": "Preventive",
+      "priority": "Critical",
+      "status": "Verified",
+      "effectiveness": "Effective",
+      "description": "Apply default-deny NetworkPolicies to every namespace.",
+      "owner": "Platform SRE"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000003",
+      "mitigation_id": "MIT-0003",
+      "title": "Adopt Pod Security Admission",
+      "type": "Technical",
+      "category": "Preventive",
+      "priority": "High",
+      "status": "Implemented",
+      "effectiveness": "Partially Effective",
+      "description": "Enforce restricted Pod Security Standards cluster-wide.",
+      "owner": "Platform SRE"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000004",
+      "mitigation_id": "MIT-0004",
+      "title": "Add certificate pinning to mobile client",
+      "type": "Technical",
+      "category": "Preventive",
+      "priority": "High",
+      "status": "In Progress",
+      "effectiveness": "Unknown",
+      "description": "Implement and test TLS certificate pinning in the mobile app.",
+      "owner": "Mobile Engineering"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000005",
+      "mitigation_id": "MIT-0005",
+      "title": "Request encryption-at-rest evidence from Vendor B",
+      "type": "Process",
+      "category": "Corrective",
+      "priority": "Medium",
+      "status": "Proposed",
+      "effectiveness": "Unknown",
+      "description": "Formally request missing encryption-at-rest documentation.",
+      "owner": "Vendor Risk"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000006",
+      "mitigation_id": "MIT-0006",
+      "title": "Automate DSAR intake workflow",
+      "type": "Process",
+      "category": "Corrective",
+      "priority": "Medium",
+      "status": "In Progress",
+      "effectiveness": "Partially Effective",
+      "description": "Automate DSAR intake and tracking to meet the 30-day SLA.",
+      "owner": "Privacy Office"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000007",
+      "mitigation_id": "MIT-0007",
+      "title": "Mandate firmware signing in CI",
+      "type": "Technical",
+      "category": "Preventive",
+      "priority": "Critical",
+      "status": "Implemented",
+      "effectiveness": "Effective",
+      "description": "Fail the build if firmware artifacts are unsigned.",
+      "owner": "Firmware Team"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000008",
+      "mitigation_id": "MIT-0008",
+      "title": "Generate SBOM on every firmware build",
+      "type": "Technical",
+      "category": "Detective",
+      "priority": "High",
+      "status": "Verified",
+      "effectiveness": "Effective",
+      "description": "Emit a CycloneDX SBOM for each firmware build artifact.",
+      "owner": "Firmware Team"
+    },
+    {
+      "id": "00000000-0000-4000-c800-000000000009",
+      "mitigation_id": "MIT-0009",
+      "title": "Privacy-by-design review gate",
+      "type": "Policy",
+      "category": "Preventive",
+      "priority": "Medium",
+      "status": "Implemented",
+      "effectiveness": "Effective",
+      "description": "Require a privacy-by-design review before data-service launch.",
+      "owner": "Privacy Office"
+    }
+  ],
+  "scheduled_assessments": [
+    {
+      "id": "00000000-0000-4000-c700-000000000001",
+      "title": "Cloud IAM Access Review",
+      "description": "Quarterly least-privilege IAM review.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "assessor_id": "00000000-0000-4000-8000-000000000002",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000003",
+      "scheduled_date": "2026-09-01",
+      "due_date": "2026-10-31",
+      "recurrence": "quarterly",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000002",
+      "title": "K8s Hardening Re-scan",
+      "description": "Follow-up hardening scan after remediation.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "assessor_id": "00000000-0000-4000-8000-000000000003",
+      "standard_id": null,
+      "assessment_id": null,
+      "scheduled_date": "2026-07-20",
+      "due_date": "2026-08-05",
+      "recurrence": "none",
+      "status": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000003",
+      "title": "Cloud Baseline Drift Check",
+      "description": "Monthly CIS baseline drift check.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "assessor_id": "00000000-0000-4000-8000-000000000002",
+      "standard_id": null,
+      "assessment_id": null,
+      "scheduled_date": "2026-07-15",
+      "due_date": "2026-07-20",
+      "recurrence": "monthly",
+      "status": "complete"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000004",
+      "title": "Mobile API Pen Test",
+      "description": "External penetration test of mobile APIs.",
+      "project_id": "00000000-0000-4000-c100-000000000002",
+      "assessor_id": "00000000-0000-4000-8000-000000000002",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000005",
+      "scheduled_date": "2026-09-10",
+      "due_date": "2026-09-30",
+      "recurrence": "none",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000005",
+      "title": "MASVS Re-assessment",
+      "description": "MASVS re-assessment after fixes.",
+      "project_id": "00000000-0000-4000-c100-000000000002",
+      "assessor_id": "00000000-0000-4000-8000-000000000003",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000004",
+      "scheduled_date": "2026-10-05",
+      "due_date": "2026-10-31",
+      "recurrence": "none",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000006",
+      "title": "Vendor B SSDF Review",
+      "description": "Review Vendor B SSDF attestation package.",
+      "project_id": "00000000-0000-4000-c100-000000000003",
+      "assessor_id": "00000000-0000-4000-8000-000000000003",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000007",
+      "scheduled_date": "2026-09-15",
+      "due_date": "2026-11-15",
+      "recurrence": "none",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000007",
+      "title": "Vendor C Onboarding Review",
+      "description": "Security onboarding review for Vendor C.",
+      "project_id": "00000000-0000-4000-c100-000000000003",
+      "assessor_id": "00000000-0000-4000-8000-000000000002",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000008",
+      "scheduled_date": "2026-10-01",
+      "due_date": "2026-11-30",
+      "recurrence": "none",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000008",
+      "title": "Annual Vendor Risk Refresh",
+      "description": "Yearly refresh of key vendor risk posture.",
+      "project_id": "00000000-0000-4000-c100-000000000003",
+      "assessor_id": "00000000-0000-4000-8000-000000000003",
+      "standard_id": null,
+      "assessment_id": null,
+      "scheduled_date": "2026-12-01",
+      "due_date": "2026-12-31",
+      "recurrence": "yearly",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000009",
+      "title": "GDPR Mapping Checkpoint",
+      "description": "Mid-assessment GDPR data-mapping checkpoint.",
+      "project_id": "00000000-0000-4000-c100-000000000004",
+      "assessor_id": "00000000-0000-4000-8000-000000000004",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000009",
+      "scheduled_date": "2026-07-25",
+      "due_date": "2026-08-10",
+      "recurrence": "none",
+      "status": "warning"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000010",
+      "title": "DSAR SLA Audit",
+      "description": "Quarterly DSAR SLA compliance audit.",
+      "project_id": "00000000-0000-4000-c100-000000000004",
+      "assessor_id": "00000000-0000-4000-8000-000000000004",
+      "standard_id": null,
+      "assessment_id": null,
+      "scheduled_date": "2026-10-15",
+      "due_date": "2026-10-31",
+      "recurrence": "quarterly",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000011",
+      "title": "Privacy Controls Re-review",
+      "description": "Follow-up privacy controls review.",
+      "project_id": "00000000-0000-4000-c100-000000000004",
+      "assessor_id": "00000000-0000-4000-8000-000000000003",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000010",
+      "scheduled_date": "2026-11-10",
+      "due_date": "2026-11-30",
+      "recurrence": "none",
+      "status": "on_hold"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000012",
+      "title": "Firmware Supply Chain Audit",
+      "description": "SBOM and provenance audit checkpoint.",
+      "project_id": "00000000-0000-4000-c100-000000000005",
+      "assessor_id": "00000000-0000-4000-8000-000000000002",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000011",
+      "scheduled_date": "2026-08-20",
+      "due_date": "2026-09-30",
+      "recurrence": "none",
+      "status": "in_progress"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000013",
+      "title": "IoT Device Pen Test",
+      "description": "Hardware and firmware penetration test.",
+      "project_id": "00000000-0000-4000-c100-000000000005",
+      "assessor_id": "00000000-0000-4000-8000-000000000002",
+      "standard_id": null,
+      "assessment_id": "00000000-0000-4000-c400-000000000012",
+      "scheduled_date": "2026-11-01",
+      "due_date": "2026-12-20",
+      "recurrence": "none",
+      "status": "scheduled"
+    },
+    {
+      "id": "00000000-0000-4000-c700-000000000014",
+      "title": "Year-End Security Review",
+      "description": "Program-wide year-end security review.",
+      "project_id": "00000000-0000-4000-c100-000000000001",
+      "assessor_id": "00000000-0000-4000-8000-000000000003",
+      "standard_id": null,
+      "assessment_id": null,
+      "scheduled_date": "2026-12-15",
+      "due_date": "2026-12-31",
+      "recurrence": "yearly",
+      "status": "scheduled"
+    }
+  ],
+  "assessment_evidence": [
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000001",
+      "evidence_id": "00000000-0000-4000-c500-000000000001"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000002",
+      "evidence_id": "00000000-0000-4000-c500-000000000002"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000002",
+      "evidence_id": "00000000-0000-4000-c500-000000000003"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000004",
+      "evidence_id": "00000000-0000-4000-c500-000000000004"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000004",
+      "evidence_id": "00000000-0000-4000-c500-000000000005"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000006",
+      "evidence_id": "00000000-0000-4000-c500-000000000006"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000006",
+      "evidence_id": "00000000-0000-4000-c500-000000000007"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000009",
+      "evidence_id": "00000000-0000-4000-c500-000000000008"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000010",
+      "evidence_id": "00000000-0000-4000-c500-000000000009"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000010",
+      "evidence_id": "00000000-0000-4000-c500-000000000012"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000011",
+      "evidence_id": "00000000-0000-4000-c500-000000000010"
+    },
+    {
+      "assessment_id": "00000000-0000-4000-c400-000000000011",
+      "evidence_id": "00000000-0000-4000-c500-000000000011"
+    }
+  ],
+  "mitigation_claim": [
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000001",
+      "claim_id": "00000000-0000-4000-c600-000000000001"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000002",
+      "claim_id": "00000000-0000-4000-c600-000000000002"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000003",
+      "claim_id": "00000000-0000-4000-c600-000000000003"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000004",
+      "claim_id": "00000000-0000-4000-c600-000000000004"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000005",
+      "claim_id": "00000000-0000-4000-c600-000000000007"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000006",
+      "claim_id": "00000000-0000-4000-c600-000000000009"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000007",
+      "claim_id": "00000000-0000-4000-c600-000000000010"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000008",
+      "claim_id": "00000000-0000-4000-c600-000000000011"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000009",
+      "claim_id": "00000000-0000-4000-c600-000000000012"
+    }
+  ],
+  "mitigation_evidence": [
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000001",
+      "evidence_id": "00000000-0000-4000-c500-000000000001"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000002",
+      "evidence_id": "00000000-0000-4000-c500-000000000003"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000007",
+      "evidence_id": "00000000-0000-4000-c500-000000000011"
+    },
+    {
+      "mitigation_id": "00000000-0000-4000-c800-000000000008",
+      "evidence_id": "00000000-0000-4000-c500-000000000010"
+    }
+  ]
 }

@@ -552,6 +552,9 @@ export function getOpenAPISpec(): OpenAPISpec {
                 },
               },
             },
+            '400': {
+              description: 'Current password is incorrect, or validation failed',
+            },
           },
         },
       },
@@ -845,6 +848,8 @@ export function getOpenAPISpec(): OpenAPISpec {
         get: {
           tags: ['Projects'],
           summary: 'Get project summary',
+          description: 'Deprecated: no client uses this route, and it will be removed in a future release. Use GET /v1/projects/{id} and GET /v1/export/project/{projectId}/pdf instead.',
+          deprecated: true,
           operationId: 'getProjectSummary',
           security: [{ cookieAuth: [] }, { apiKeyAuth: [] }],
           parameters: [
@@ -4394,110 +4399,6 @@ export function getOpenAPISpec(): OpenAPISpec {
           },
         },
       },
-      '/v1/dashboard/configs': {
-        get: {
-          tags: ['Dashboard'],
-          summary: 'Get dashboard configs',
-          operationId: 'getDashboardConfigs',
-          security: [{ cookieAuth: [] }, { apiKeyAuth: [] }],
-          responses: {
-            '200': {
-              description: 'Dashboard configs',
-              content: {
-                'application/json': {
-                  schema: { type: 'object' },
-                },
-              },
-            },
-          },
-        },
-        post: {
-          tags: ['Dashboard'],
-          summary: 'Create dashboard config',
-          operationId: 'createDashboardConfig',
-          security: [{ cookieAuth: [] }, { apiKeyAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: { type: 'object' },
-              },
-            },
-          },
-          responses: {
-            '201': {
-              description: 'Dashboard config created',
-              content: {
-                'application/json': {
-                  schema: { type: 'object' },
-                },
-              },
-            },
-          },
-        },
-      },
-      '/v1/dashboard/configs/{id}': {
-        get: {
-          tags: ['Dashboard'],
-          summary: 'Get dashboard config',
-          operationId: 'getDashboardConfig',
-          security: [{ cookieAuth: [] }, { apiKeyAuth: [] }],
-          parameters: [
-            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-          ],
-          responses: {
-            '200': {
-              description: 'Dashboard config',
-              content: {
-                'application/json': {
-                  schema: { type: 'object' },
-                },
-              },
-            },
-          },
-        },
-        put: {
-          tags: ['Dashboard'],
-          summary: 'Update dashboard config',
-          operationId: 'updateDashboardConfig',
-          security: [{ cookieAuth: [] }, { apiKeyAuth: [] }],
-          parameters: [
-            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-          ],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: { type: 'object' },
-              },
-            },
-          },
-          responses: {
-            '200': {
-              description: 'Dashboard config updated',
-              content: {
-                'application/json': {
-                  schema: { type: 'object' },
-                },
-              },
-            },
-          },
-        },
-        delete: {
-          tags: ['Dashboard'],
-          summary: 'Delete dashboard config',
-          operationId: 'deleteDashboardConfig',
-          security: [{ cookieAuth: [] }, { apiKeyAuth: [] }],
-          parameters: [
-            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-          ],
-          responses: {
-            '204': {
-              description: 'Dashboard config deleted',
-            },
-          },
-        },
-      },
       '/v1/dashboard/progress': {
         get: {
           tags: ['Dashboard'],
@@ -4744,6 +4645,25 @@ export function getOpenAPISpec(): OpenAPISpec {
           responses: {
             '200': {
               description: 'Assessment PDF',
+              content: {
+                'application/pdf': {},
+              },
+            },
+          },
+        },
+      },
+      '/v1/export/project/{projectId}/pdf': {
+        get: {
+          tags: ['Export'],
+          summary: 'Export project report as PDF',
+          operationId: 'exportProjectPdf',
+          security: [{ cookieAuth: [] }],
+          parameters: [
+            { name: 'projectId', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': {
+              description: 'Project PDF',
               content: {
                 'application/pdf': {},
               },

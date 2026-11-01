@@ -61,47 +61,79 @@ export function isReservedHostname(hostname: string): boolean {
 }
 
 /**
- * Test an IPv4 address against the private, loopback, link-local, and
- * reserved ranges. Inputs must be dotted-quad strings.
+ * Every special-purpose range that is never a legitimate outbound
+ * target (IANA IPv4/IPv6 special-purpose registries). Checked with
+ * net.BlockList so CIDR math is done by the runtime, not by regex.
  */
+const BLOCKED_V4: ReadonlyArray<[string, number]> = [
+  ['0.0.0.0', 8],         // "this network"
+  ['10.0.0.0', 8],        // private
+  ['100.64.0.0', 10],     // CGNAT
+  ['127.0.0.0', 8],       // loopback
+  ['169.254.0.0', 16],    // link-local (cloud metadata)
+  ['172.16.0.0', 12],     // private
+  ['192.0.0.0', 24],      // IETF protocol assignments
+  ['192.0.2.0', 24],      // TEST-NET-1
+  ['192.88.99.0', 24],    // 6to4 relay anycast
+  ['192.168.0.0', 16],    // private
+  ['198.18.0.0', 15],     // benchmarking
+  ['198.51.100.0', 24],   // TEST-NET-2
+  ['203.0.113.0', 24],    // TEST-NET-3
+  ['224.0.0.0', 4],       // multicast
+  ['240.0.0.0', 4],       // reserved + broadcast
+];
+const BLOCKED_V6: ReadonlyArray<[string, number]> = [
+  ['::', 128],            // unspecified
+  ['::1', 128],           // loopback
+  ['::', 96],             // IPv4-compatible (deprecated)
+  ['64:ff9b::', 96],      // NAT64 well-known prefix
+  ['64:ff9b:1::', 48],    // local-use NAT64
+  ['100::', 64],          // discard-only
+  ['2001::', 32],         // Teredo
+  ['2001:db8::', 32],     // documentation
+  ['2002::', 16],         // 6to4
+  ['fc00::', 7],          // unique local
+  ['fe80::', 10],         // link-local
+  ['ff00::', 8],          // multicast
+];
+const blocklist = new net.BlockList();
+for (const [addr, prefix] of BLOCKED_V4) blocklist.addSubnet(addr, prefix, 'ipv4');
+for (const [addr, prefix] of BLOCKED_V6) blocklist.addSubnet(addr, prefix, 'ipv6');
+
+/** Strips the brackets URL parsing keeps around IPv6 literals ("[::1]"). */
+export function normalizeHost(hostname: string): string {
+  const h = hostname.toLowerCase();
+  return h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
+}
+
+/** True for any IPv4 address in a private, loopback, link-local or reserved range. */
 export function isPrivateIpv4(address: string): boolean {
-  const match = address.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!match) return false;
-  const a = Number(match[1]);
-  const b = Number(match[2]);
-  if (a === 10) return true;                              // 10.0.0.0/8
-  if (a === 172 && b >= 16 && b <= 31) return true;       // 172.16.0.0/12
-  if (a === 192 && b === 168) return true;                // 192.168.0.0/16
-  if (a === 169 && b === 254) return true;                // 169.254.0.0/16
-  if (a === 127) return true;                             // 127.0.0.0/8
-  if (a === 100 && b >= 64 && b <= 127) return true;      // 100.64.0.0/10 (CGNAT)
-  if (a === 0) return true;                               // 0.0.0.0/8
-  if (a >= 224) return true;                              // multicast + reserved
-  return false;
+  if (!net.isIPv4(address)) return false;
+  return blocklist.check(address, 'ipv4');
 }
 
 /**
- * Test an IPv6 address against the private, loopback, link-local, and
- * reserved ranges. Inputs must be a string already normalized by the
- * runtime (for example, via `net.isIPv6`).
+ * True for any IPv6 address in a special-purpose range. IPv4-mapped
+ * addresses (::ffff:a.b.c.d) are judged by their embedded IPv4.
  */
 export function isPrivateIpv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === '::1' || normalized === '::') return true;
-  // Unique local addresses fc00::/7
-  if (/^f[cd][0-9a-f]{2}:/.test(normalized)) return true;
-  // Link local fe80::/10
-  if (/^fe[89ab][0-9a-f]:/.test(normalized)) return true;
-  // IPv4-mapped IPv6 (::ffff:x.y.z.w) — check the embedded v4
-  const mapped = normalized.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped && mapped[1] && isPrivateIpv4(mapped[1])) return true;
-  return false;
+  const a = normalizeHost(address);
+  if (!net.isIPv6(a)) return false;
+  const mapped = a.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mapped?.[1]) return isPrivateIpv4(mapped[1]);
+  if (/^::ffff:[0-9a-f]{1,4}:[0-9a-f]{1,4}$/.test(a)) {
+    // Hex form of a mapped address: ::ffff:a9fe:a9fe
+    const [hi, lo] = a.slice(7).split(':').map((h) => parseInt(h, 16));
+    return isPrivateIpv4(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+  }
+  return blocklist.check(a, 'ipv6');
 }
 
 /** Any-family predicate used downstream. */
 export function isPrivateIpAddress(address: string): boolean {
-  if (net.isIPv4(address)) return isPrivateIpv4(address);
-  if (net.isIPv6(address)) return isPrivateIpv6(address);
+  const a = normalizeHost(address);
+  if (net.isIPv4(a)) return isPrivateIpv4(a);
+  if (net.isIPv6(a)) return isPrivateIpv6(a);
   return false;
 }
 
@@ -131,7 +163,7 @@ export function isPrivateOrReservedUrl(
       return true;
     }
 
-    const hostname = parsed.hostname.toLowerCase();
+    const hostname = normalizeHost(parsed.hostname);
     if (isReservedHostname(hostname)) return true;
     if (net.isIP(hostname) && isPrivateIpAddress(hostname)) return true;
 
@@ -175,7 +207,7 @@ export async function resolveAndAssertPublic(
     return { safe: false, reason: `Unsupported URL scheme ${parsed.protocol}` };
   }
 
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = normalizeHost(parsed.hostname);
   if (isReservedHostname(hostname)) {
     return { safe: false, reason: `Hostname ${hostname} is reserved` };
   }
@@ -216,4 +248,28 @@ export async function resolveAndAssertPublic(
   }
 
   return { safe: true };
+}
+
+/**
+ * Creation-time check for user-entered integration URLs: true when the
+ * hostname resolves and any answer is private or reserved, so a name like
+ * `canary` or `db` that points inside the network is refused when it is
+ * saved. A hostname that does not resolve is not refused here (it may not
+ * exist yet); safeFetch checks again on every delivery, which is the
+ * guard that counts, since DNS can change after saving.
+ */
+export async function hostnameResolvesToPrivate(urlString: string): Promise<boolean> {
+  let hostname: string;
+  try {
+    hostname = normalizeHost(new URL(urlString).hostname);
+  } catch {
+    return false;
+  }
+  if (net.isIP(hostname)) return isPrivateIpAddress(hostname);
+  try {
+    const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+    return addresses.some((a) => isPrivateIpAddress(a.address));
+  } catch {
+    return false;
+  }
 }

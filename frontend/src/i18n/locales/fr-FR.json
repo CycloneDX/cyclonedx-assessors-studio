@@ -116,7 +116,9 @@
     "password": "Mot de passe",
     "signIn": "Se connecter",
     "enterCredentials": "Veuillez entrer le nom d'utilisateur et le mot de passe",
-    "loginFailed": "Connexion échouée. Veuillez réessayer."
+    "loginFailed": "Connexion échouée. Veuillez réessayer.",
+    "forgotPassword": "Mot de passe oublié ?",
+    "resetDone": "Votre mot de passe a été réinitialisé. Connectez-vous avec votre nouveau mot de passe."
   },
   "setup": {
     "welcome": "Bienvenue dans Assessors Studio",
@@ -587,5 +589,23 @@
   },
   "dropZones": {
     "makeRootLevel": "Déposez ici pour faire le niveau racine"
+  },
+  "passwordReset": {
+    "forgotTitle": "Réinitialiser votre mot de passe",
+    "forgotIntro": "Saisissez l’adresse e-mail de votre compte. Si elle correspond à un compte, nous vous enverrons un lien pour choisir un nouveau mot de passe.",
+    "email": "Adresse e-mail",
+    "enterEmail": "Veuillez saisir votre adresse e-mail",
+    "sendLink": "Envoyer le lien de réinitialisation",
+    "requestSent": "Si un compte existe pour cette adresse, un lien de réinitialisation est en route. Le lien expire au bout de 30 minutes.",
+    "requestFailed": "La demande n’a pas pu être envoyée. Veuillez réessayer.",
+    "resetTitle": "Choisir un nouveau mot de passe",
+    "newPassword": "Nouveau mot de passe",
+    "confirmPassword": "Confirmer le nouveau mot de passe",
+    "minLength": "Au moins {n} caractères",
+    "mismatch": "Les mots de passe ne correspondent pas",
+    "setPassword": "Enregistrer le nouveau mot de passe",
+    "missingToken": "Ce lien de réinitialisation est incomplet. Rouvrez le lien depuis votre e-mail ou demandez-en un nouveau.",
+    "resetFailed": "Le mot de passe n’a pas pu être réinitialisé. Le lien a peut-être expiré ; demandez-en un nouveau.",
+    "backToLogin": "Retour à la connexion"
   }
 }

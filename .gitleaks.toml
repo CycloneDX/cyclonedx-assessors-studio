@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────
+# gitleaks repo config.
+#
+# Extends gitleaks' default ruleset and allowlists VERIFIED non-secrets so the
+# pre-commit gate (`gitleaks protect --staged`) does not nag on synthetic test
+# fixtures or bundled public data. Every path below was inspected and confirmed
+# to be a fixture or public license data, NOT a live credential (2026-10-09):
+#   - **/__tests__/** , *.test.ts, *.spec.ts  → synthetic tokens in unit tests
+#   - cdxspec/validator/schemas/spdx.schema.json → SPDX license-list (matched on
+#     the string "Hippocratic" license id, a false positive)
+#
+# Adding to this allowlist is bound tuning: Audit scan 7 + user approval,
+# never a mid-task edit to make the gate pass (§16.5).
+# ─────────────────────────────────────────────────────────────────────────
+[extend]
+useDefault = true
+
+[allowlist]
+description = "verified non-secrets: unit-test fixtures, SPDX license-list schema, JSF test vectors, one historical throwaway key"
+paths = [
+  '''.*__tests__/.*''',
+  '''.*\.test\.ts$''',
+  '''.*\.spec\.ts$''',
+  '''backend/src/cdxspec/validator/schemas/spdx\.schema\.json$''',
+  # JSF signature library interop/test vectors: public test keys and the
+  # fixture HMAC secret, never used to sign anything real (2026-10-22).
+  '''backend/packages/jsf/test/fixtures/.*''',
+]
+# The deleted backend/tmp-verify/verify.ts carried a throwaway local
+# ENCRYPTION_KEY used by nothing else (checked: no .env, not in the running
+# container). Allowlisted by commit so a full-history scan is clean
+# without hiding any future file. Approved by the user with the security
+# review's N18 item (2026-10-22).
+commits = [
+  '6961aaa227a4a491d909c6a00dc46f196cc633d3',
+]

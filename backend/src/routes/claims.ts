@@ -1,14 +1,16 @@
 import { Router } from 'express';
+import { visibleEvidenceIds } from '../utils/access.js';
 import type { Response } from 'express';
 import type { Kysely } from 'kysely';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
-import { type AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
+import { type AuthRequest, requireAuth, requirePermission, getPermissionsForRole } from '../middleware/auth.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
 import { rejectIfClaimImmutable } from '../utils/retention.js';
+import { logAudit } from '../utils/audit.js';
 
 const router = Router();
 
@@ -124,6 +126,15 @@ function buildClaimUpdateData(data: Record<string, unknown>): Record<string, unk
   if (data.reasoning !== undefined) updateData.reasoning = data.reasoning;
   if (data.isCounterClaim !== undefined) updateData.isCounterClaim = data.isCounterClaim;
   if (data.attestationId !== undefined) updateData.attestationId = data.attestationId;
+  if (data.status !== undefined) updateData.status = data.status;
+  if (data.claimType !== undefined) updateData.claimType = data.claimType;
+  if (data.confidence !== undefined) updateData.confidence = data.confidence;
+  if (data.projectName !== undefined) updateData.projectName = data.projectName;
+  if (data.projectRequirement !== undefined) updateData.projectRequirement = data.projectRequirement;
+  if (data.framework !== undefined) updateData.framework = data.framework;
+  if (data.assessor !== undefined) updateData.assessor = data.assessor;
+  if (data.claimDate !== undefined) updateData.claimDate = data.claimDate;
+  if (data.workNotes !== undefined) updateData.workNotes = data.workNotes;
   return updateData;
 }
 
@@ -203,6 +214,15 @@ const createClaimSchema = z.object({
   attestationId: z.string().uuid().optional(),
   evidenceIds: z.array(z.string().uuid()).optional(),
   counterEvidenceIds: z.array(z.string().uuid()).optional(),
+  status: z.enum(['Draft', 'Under Review', 'Accepted', 'Rejected']).optional().default('Draft'),
+  claimType: z.enum(['Conformance', 'Non-Conformance', 'Exemption', 'Compensating Control']).optional().nullable(),
+  confidence: z.enum(['High', 'Medium', 'Low']).optional().nullable(),
+  projectName: z.string().max(255).optional().nullable(),
+  projectRequirement: z.string().max(100).optional().nullable(),
+  framework: z.string().max(255).optional().nullable(),
+  assessor: z.string().max(255).optional().nullable(),
+  claimDate: z.string().optional().nullable(),
+  workNotes: z.string().optional().nullable(),
 });
 
 const updateClaimSchema = z.object({
@@ -215,9 +235,100 @@ const updateClaimSchema = z.object({
   attestationId: z.string().uuid().optional(),
   evidenceIds: z.array(z.string().uuid()).optional(),
   counterEvidenceIds: z.array(z.string().uuid()).optional(),
+  status: z.enum(['Draft', 'Under Review', 'Accepted', 'Rejected']).optional(),
+  claimType: z.enum(['Conformance', 'Non-Conformance', 'Exemption', 'Compensating Control']).optional().nullable(),
+  confidence: z.enum(['High', 'Medium', 'Low']).optional().nullable(),
+  projectName: z.string().max(255).optional().nullable(),
+  projectRequirement: z.string().max(100).optional().nullable(),
+  framework: z.string().max(255).optional().nullable(),
+  assessor: z.string().max(255).optional().nullable(),
+  claimDate: z.string().optional().nullable(),
+  workNotes: z.string().optional().nullable(),
 });
 
-router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+// GET /api/v1/claims
+// Row-visibility scope for claims. Without claims.view_all (i.e. an assessee), a
+// caller only sees claims whose attestation resolves to an assessment they
+// participate in. Standalone (unlinked) claims have no assessment and are hidden
+// from scoped callers. Assessors and admins hold claims.view_all.
+// biome-ignore lint/suspicious/noExplicitAny: Kysely expression-builder callback
+const claimsInScope = (userId: string) => (eb: any) =>
+  eb('attestation_id', 'in',
+    eb.selectFrom('attestation')
+      .select('attestation.id')
+      .where((inner: any) =>
+        inner.or([
+          inner('attestation.assessment_id', 'in', inner.selectFrom('assessment_assessor').select('assessment_id').where('user_id', '=', userId)),
+          inner('attestation.assessment_id', 'in', inner.selectFrom('assessment_assessee').select('assessment_id').where('user_id', '=', userId)),
+        ]),
+      ),
+  );
+
+/**
+ * Write gate shared by every claim mutation (security review Z2, Z8): the
+ * claim exists, is not frozen by a signed attestation, its assessment is
+ * not read-only, and the caller participates in that assessment. Responds
+ * and returns null when the caller may not write.
+ */
+export async function authorizeClaimWrite(
+  db: ReturnType<typeof getDatabase>,
+  req: AuthRequest,
+  res: Response,
+  claimId: string,
+  { includeDeleted = false }: { includeDeleted?: boolean } = {},
+): Promise<Record<string, unknown> | null> {
+  const claim = includeDeleted
+    ? await db.selectFrom('claim_raw').select(['id', 'attestation_id', 'deleted_at', 'name']).where('id', '=', claimId).executeTakeFirst()
+    : await db.selectFrom('claim').selectAll().where('id', '=', claimId).executeTakeFirst();
+  if (!claim) {
+    res.status(404).json({ error: 'Claim not found' });
+    return null;
+  }
+  if (await rejectIfClaimImmutable(db, claimId, res)) return null;
+  const attestationId = (claim as Record<string, unknown>).attestation_id as string;
+  const readOnlyError = await checkClaimAssessmentReadOnly(db, attestationId);
+  if (readOnlyError) {
+    res.status(403).json({ error: readOnlyError });
+    return null;
+  }
+  if (!(await isAttestationParticipant(db, req.user!.id, req.user!.role, attestationId))) {
+    res.status(403).json({ error: 'You are not a participant in this assessment' });
+    return null;
+  }
+  return claim as Record<string, unknown>;
+}
+
+router.get('/', requireAuth, requirePermission('claims.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDatabase();
+  const userPerms = req.user?.id ? await getPermissionsForRole(req.user.role) : [];
+  const claimsViewAll = userPerms.includes('claims.view_all');
+  const scopeUserId = req.user?.id ?? '';
+
+  let listQuery = db
+    .selectFrom('claim')
+    .selectAll()
+    .orderBy('created_at', 'desc');
+  if (!claimsViewAll) {
+    listQuery = listQuery.where(claimsInScope(scopeUserId));
+  }
+  const rows = await listQuery.execute();
+
+  const enriched = await Promise.all(rows.map(async (row) => {
+    const [evidenceRes, mitigationRes] = await Promise.all([
+      db.selectFrom('claim_evidence').where('claim_id', '=', row.id).select(db.fn.count('claim_id').as('cnt')).executeTakeFirst(),
+      db.selectFrom('mitigation_claim').where('claim_id', '=', row.id).select(db.fn.count('claim_id').as('cnt')).executeTakeFirst(),
+    ]);
+    return {
+      ...row,
+      evidenceCount: Number(evidenceRes?.cnt ?? 0),
+      mitigationCount: Number(mitigationRes?.cnt ?? 0),
+    };
+  }));
+
+  res.json({ data: enriched, total: enriched.length });
+}));
+
+router.get('/:id', requireAuth, requirePermission('claims.view'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
 
   const claim = await db
@@ -231,25 +342,52 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
     return;
   }
 
+  // Object-level scope: a caller without claims.view_all may only read a claim
+  // whose attestation resolves to an assessment they participate in. 404 (not
+  // 403) so out-of-scope claim existence is not leaked.
+  const detailPerms = req.user?.id ? await getPermissionsForRole(req.user.role) : [];
+  if (!detailPerms.includes('claims.view_all')) {
+    const uid = req.user?.id ?? '';
+    let allowed = false;
+    if (claim.attestation_id) {
+      const row = await db
+        .selectFrom('attestation')
+        .where('attestation.id', '=', claim.attestation_id as string)
+        .where((inner) =>
+          inner.or([
+            inner('attestation.assessment_id', 'in', inner.selectFrom('assessment_assessor').select('assessment_id').where('user_id', '=', uid)),
+            inner('attestation.assessment_id', 'in', inner.selectFrom('assessment_assessee').select('assessment_id').where('user_id', '=', uid)),
+          ]),
+        )
+        .select('attestation.id')
+        .executeTakeFirst();
+      allowed = !!row;
+    }
+    if (!allowed) {
+      res.status(404).json({ error: 'Claim not found' });
+      return;
+    }
+  }
+
   const evidence = await db
     .selectFrom('claim_evidence')
     .innerJoin('evidence', 'evidence.id', 'claim_evidence.evidence_id')
     .where('claim_evidence.claim_id', '=', req.params.id)
-    .select(['evidence.id', 'evidence.name', 'evidence.description', 'evidence.state'])
+    .select(['evidence.id', 'evidence.display_id', 'evidence.name', 'evidence.description', 'evidence.state'])
     .execute();
 
   const counterEvidence = await db
     .selectFrom('claim_counter_evidence')
     .innerJoin('evidence', 'evidence.id', 'claim_counter_evidence.evidence_id')
     .where('claim_counter_evidence.claim_id', '=', req.params.id)
-    .select(['evidence.id', 'evidence.name', 'evidence.description', 'evidence.state'])
+    .select(['evidence.id', 'evidence.display_id', 'evidence.name', 'evidence.description', 'evidence.state'])
     .execute();
 
   const mitigationStrategies = await db
     .selectFrom('claim_mitigation_strategy')
     .innerJoin('evidence', 'evidence.id', 'claim_mitigation_strategy.evidence_id')
     .where('claim_mitigation_strategy.claim_id', '=', req.params.id)
-    .select(['evidence.id', 'evidence.name', 'evidence.description', 'evidence.state'])
+    .select(['evidence.id', 'evidence.display_id', 'evidence.name', 'evidence.description', 'evidence.state'])
     .execute();
 
   // Fetch target entity details if linked
@@ -271,6 +409,13 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
     .orderBy('created_at', 'asc')
     .execute();
 
+  const linkedMitigations = await db
+    .selectFrom('mitigation_claim')
+    .innerJoin('mitigation', 'mitigation.id', 'mitigation_claim.mitigation_id')
+    .select(['mitigation.id', 'mitigation.title', 'mitigation.status', 'mitigation.priority', 'mitigation.type', 'mitigation.owner'])
+    .where('mitigation_claim.claim_id', '=', req.params.id)
+    .execute();
+
   res.json({
     claim,
     evidence,
@@ -278,6 +423,7 @@ router.get('/:id', requireAuth, asyncHandler(async (req: AuthRequest, res: Respo
     mitigationStrategies,
     targetEntity,
     externalReferences,
+    linkedMitigations,
   });
 }));
 
@@ -369,6 +515,14 @@ router.post(
           .execute();
       }
 
+      await logAudit(db, {
+        entityType: 'claim',
+        entityId: claimId,
+        action: 'create',
+        userId: req.user?.id ?? null,
+        changes: { name: data.name, is_counter_claim: data.isCounterClaim },
+      });
+
       logger.info('Claim created', {
         claimId,
         name: data.name,
@@ -435,6 +589,11 @@ router.put(
         if (data.attestationId && !await validateAttestationChange(db, data.attestationId, res)) {
           return;
         }
+        // Moving a claim also writes into the target assessment.
+        if (data.attestationId && !(await isAttestationParticipant(db, req.user!.id, req.user!.role, data.attestationId))) {
+          res.status(403).json({ error: 'You are not a participant in the target assessment' });
+          return;
+        }
       }
 
       // Update main claim fields
@@ -450,6 +609,14 @@ router.put(
       // Sync evidence associations
       await syncClaimEvidence(db, req.params.id as string, data.evidenceIds);
       await syncClaimCounterEvidence(db, req.params.id as string, data.counterEvidenceIds);
+
+      await logAudit(db, {
+        entityType: 'claim',
+        entityId: req.params.id as string,
+        action: 'update',
+        userId: req.user?.id ?? null,
+        changes: toSnakeCase(updateData),
+      });
 
       logger.info('Claim updated', {
         claimId: req.params.id,
@@ -478,31 +645,22 @@ router.delete(
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
 
-    const claim = await db
-      .selectFrom('claim')
-      .where('id', '=', req.params.id)
-      .selectAll()
-      .executeTakeFirst();
+    // Retention lock (signed claims are frozen for every caller), read-only
+    // assessment, and participation (security review Z8).
+    const claim = await authorizeClaimWrite(db, req, res, req.params.id as string);
+    if (!claim) return;
 
-    if (!claim) {
-      res.status(404).json({ error: 'Claim not found' });
-      return;
-    }
+    // Soft delete: `claim` is a view hiding deleted rows; the physical row
+    // stays in claim_raw for restore. Purge removes it permanently.
+    await db.updateTable('claim').set({ deleted_at: new Date() }).where('id', '=', req.params.id).execute();
 
-    // Sprint 5.7: retention lock. Deleting a claim cited in a signed
-    // attestation is a mutation on the signed record via cascade. We
-    // reject for every caller, including admins.
-    if (await rejectIfClaimImmutable(db, req.params.id as string, res)) return;
-
-    // Guard: reject if parent assessment is complete/archived
-    // biome-ignore lint/suspicious/noExplicitAny: claim shape is dynamic from query result
-    const readOnlyError = await checkClaimAssessmentReadOnly(db, (claim as any).attestation_id);
-    if (readOnlyError) {
-      res.status(403).json({ error: readOnlyError });
-      return;
-    }
-
-    await db.deleteFrom('claim').where('id', '=', req.params.id).execute();
+    await logAudit(db, {
+      entityType: 'claim',
+      entityId: req.params.id as string,
+      action: 'delete',
+      userId: req.user?.id ?? null,
+      changes: { name: (claim as Record<string, unknown>).name },
+    });
 
     logger.info('Claim deleted', {
       claimId: req.params.id,
@@ -512,5 +670,95 @@ router.delete(
     res.status(204).send();
   })
 );
+
+// Restore a soft-deleted claim. Targets claim_raw because the claim view hides
+// deleted rows.
+router.post(
+  '/:id/restore',
+  requireAuth,
+  requirePermission('claims.edit'),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    const db = getDatabase();
+    const row = await authorizeClaimWrite(db, req, res, req.params.id as string, { includeDeleted: true });
+    if (!row) return;
+    if (!row.deleted_at) {
+      res.status(409).json({ error: 'Claim is not deleted' });
+      return;
+    }
+
+    await db
+      .updateTable('claim_raw')
+      .set({ deleted_at: null })
+      .where('id', '=', req.params.id as string)
+      .execute();
+
+    logger.info('Claim restored', { claimId: req.params.id, requestId: req.requestId });
+    res.json({ message: 'Claim restored' });
+  })
+);
+
+// Link routes: same permission and write gate as PUT /claims/:id
+// (security review Z2). They used to need only a login, so any user could
+// detach evidence from a signed claim.
+
+// POST /api/v1/claims/:id/mitigations/:mitigationId
+router.post('/:id/mitigations/:mitigationId', requireAuth, requirePermission('claims.edit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDatabase();
+  if (!(await authorizeClaimWrite(db, req, res, req.params.id as string))) return;
+  const mitigation = await db.selectFrom('mitigation').select('id').where('id', '=', req.params.mitigationId as string).executeTakeFirst();
+  if (!mitigation) {
+    res.status(404).json({ error: 'Mitigation not found' });
+    return;
+  }
+  await db
+    .insertInto('mitigation_claim')
+    .values({ mitigation_id: req.params.mitigationId as string, claim_id: req.params.id as string, created_at: new Date() })
+    .onConflict(oc => oc.doNothing())
+    .execute();
+  res.status(204).send();
+}));
+
+// DELETE /api/v1/claims/:id/mitigations/:mitigationId
+router.delete('/:id/mitigations/:mitigationId', requireAuth, requirePermission('claims.edit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDatabase();
+  if (!(await authorizeClaimWrite(db, req, res, req.params.id as string))) return;
+  await db
+    .deleteFrom('mitigation_claim')
+    .where('claim_id', '=', req.params.id as string)
+    .where('mitigation_id', '=', req.params.mitigationId as string)
+    .execute();
+  res.status(204).send();
+}));
+
+// POST /api/v1/claims/:id/evidence/:evidenceId
+router.post('/:id/evidence/:evidenceId', requireAuth, requirePermission('claims.edit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDatabase();
+  if (!(await authorizeClaimWrite(db, req, res, req.params.id as string))) return;
+  // The caller must be able to see the evidence they cite.
+  const visible = await visibleEvidenceIds(db, req.user!, [req.params.evidenceId as string]);
+  const exists = await db.selectFrom('evidence').select('id').where('id', '=', req.params.evidenceId as string).executeTakeFirst();
+  if (!exists || (visible !== null && !visible.has(req.params.evidenceId as string))) {
+    res.status(404).json({ error: 'Evidence not found' });
+    return;
+  }
+  await db
+    .insertInto('claim_evidence')
+    .values(toSnakeCase({ claimId: req.params.id as string, evidenceId: req.params.evidenceId as string, createdAt: new Date() }) as any)
+    .onConflict(oc => oc.doNothing())
+    .execute();
+  res.status(204).send();
+}));
+
+// DELETE /api/v1/claims/:id/evidence/:evidenceId
+router.delete('/:id/evidence/:evidenceId', requireAuth, requirePermission('claims.edit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+  const db = getDatabase();
+  if (!(await authorizeClaimWrite(db, req, res, req.params.id as string))) return;
+  await db
+    .deleteFrom('claim_evidence')
+    .where('claim_id', '=', req.params.id as string)
+    .where('evidence_id', '=', req.params.evidenceId as string)
+    .execute();
+  res.status(204).send();
+}));
 
 export default router;

@@ -6,13 +6,14 @@
  * plus delivery log access.
  */
 
+import { auditMutations } from '../utils/audit.js';
 import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabase } from '../db/connection.js';
 import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
-import { AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
+import { AuthRequest, requireAuth, requirePermission, requireSession } from '../middleware/auth.js';
 import { getChannelRegistry } from '../events/index.js';
 import { SlackChannel } from '../events/channels/chat-slack.js';
 import { TeamsChannel } from '../events/channels/chat-teams.js';
@@ -21,8 +22,10 @@ import { BaseChatChannel } from '../events/channels/chat-base.js';
 import { validatePagination } from '../utils/pagination.js';
 import { checkResourceExists } from '../utils/resource-checks.js';
 import { encryptionService, isEncryptedEnvelope } from '../utils/encryption.js';
+import { hostnameResolvesToPrivate } from '../utils/url-safety.js';
 
 const router = Router();
+router.use(auditMutations('chat_integration'));
 
 /**
  * Mask a webhook URL for API responses. Returns the origin plus a
@@ -74,6 +77,19 @@ function isChatPlatform(value: string): value is ChatPlatform {
 }
 
 // ---- Helper functions ----
+
+/**
+ * Refuses a URL whose hostname resolves inside the network (a Mattermost
+ * URL only has to be https://). Delivery re-checks with safeFetch.
+ */
+async function rejectInternalHost(url: string | undefined, res: Response): Promise<boolean> {
+  if (!url || !(await hostnameResolvesToPrivate(url))) return false;
+  res.status(400).json({
+    error: 'Invalid webhook URL',
+    message: 'The URL must not point to a private, reserved, or internal network address',
+  });
+  return true;
+}
 
 /**
  * Validate webhook URL for a given platform.
@@ -222,7 +238,7 @@ router.get(
  */
 router.post(
   '/',
-  requireAuth,
+  requireSession,
   requirePermission('admin.integrations'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -237,6 +253,7 @@ router.post(
         });
         return;
       }
+      if (await rejectInternalHost(data.webhookUrl, res)) return;
 
       const db = getDatabase();
       const id = uuidv4();
@@ -339,7 +356,7 @@ router.get(
  */
 router.put(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.integrations'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     try {
@@ -353,6 +370,7 @@ router.put(
       if (data.webhookUrl && !validateWebhookUrlForPlatform(integration.platform, data.webhookUrl, res)) {
         return;
       }
+      if (await rejectInternalHost(data.webhookUrl, res)) return;
 
       const updates = buildChatIntegrationUpdates(data);
       await db
@@ -376,7 +394,7 @@ router.put(
  */
 router.delete(
   '/:id',
-  requireAuth,
+  requireSession,
   requirePermission('admin.integrations'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -399,7 +417,7 @@ router.delete(
  */
 router.post(
   '/:id/test',
-  requireAuth,
+  requireSession,
   requirePermission('admin.integrations'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -459,7 +477,7 @@ router.post(
  */
 router.post(
   '/:id/enable',
-  requireAuth,
+  requireSession,
   requirePermission('admin.integrations'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();

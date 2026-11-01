@@ -59,10 +59,14 @@ export class JsfSignatureProvider implements SignatureProvider {
 
   canonicalize(
     payload: JsonObject,
-    signer: { algorithm: string; excludes?: string[]; signatureProperty?: string },
+    signer: { algorithm: string; excludes?: string[]; signatureProperty?: string; publicKey?: JsonObject },
   ): CanonicalizedPayload {
+    // When the envelope will embed the signer's public key, it is part of
+    // the signed bytes; include it here or /prepare hashes different bytes
+    // than verify checks (security review X2).
     const descriptor: Omit<JsfSigner, 'value'> = {
       algorithm: signer.algorithm as JsfAlgorithm,
+      ...(signer.publicKey ? { publicKey: signer.publicKey as unknown as JsfSigner['publicKey'] } : {}),
       ...(signer.excludes ? { excludes: [...signer.excludes] } : {}),
     };
     const state: JsfCanonicalInputState = {
@@ -94,21 +98,25 @@ export class JsfSignatureProvider implements SignatureProvider {
     const jsfOptions = mapSignOptions(options);
     const envelope = await jsfSign(payload as JsfJsonObject, jsfOptions);
 
-    // Recompute the canonical bytes so we can return them to the caller
-    // alongside the envelope. Both callers and audit logs benefit from
-    // having the pre-signature input persisted next to the signature.
-    const canonical = this.canonicalize(payload, {
-      algorithm: options.algorithm,
-      ...(options.excludes ? { excludes: options.excludes } : {}),
-      ...(options.signatureProperty ? { signatureProperty: options.signatureProperty } : {}),
-    });
-
     const property = options.signatureProperty ?? 'signature';
     const signer = envelope[property] as unknown as JsfSigner | undefined;
     if (!signer) {
       // Should be impossible: jsfSign only returns on success.
       throw new Error('JSF sign returned an envelope without a signer');
     }
+
+    // Recompute the canonical bytes so we can return them to the caller
+    // alongside the envelope. Both callers and audit logs benefit from
+    // having the pre-signature input persisted next to the signature.
+    // The public key jsfSign embedded is part of the signed bytes, so it
+    // must be part of these too; without it the returned hash never
+    // matched what verify recomputes (demo seal "drift").
+    const canonical = this.canonicalize(payload, {
+      algorithm: options.algorithm,
+      ...(signer.publicKey ? { publicKey: signer.publicKey as unknown as JsonObject } : {}),
+      ...(options.excludes ? { excludes: options.excludes } : {}),
+      ...(options.signatureProperty ? { signatureProperty: options.signatureProperty } : {}),
+    });
 
     const result: ProviderSignResult = {
       envelope: envelope as JsonObject,

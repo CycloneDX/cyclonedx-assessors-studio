@@ -19,6 +19,15 @@ dotenv.config();
 const FILE_BACKED_ENV_VARS = [
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY',
+  // Every secret can come from a mounted file (Compose secrets) so it is
+  // not visible in `docker inspect` or /proc/*/environ (security review W5).
+  'DATABASE_URL',
+  'DATABASE_PASSWORD',
+  'JWT_SECRET',
+  'MASTER_ENCRYPTION_KEY',
+  'SMTP_PASS',
+  'METRICS_TOKEN',
+  'SETUP_TOKEN',
 ] as const;
 
 /**
@@ -33,7 +42,7 @@ const FILE_BACKED_ENV_VARS = [
  * re-resolve explicitly after changing the `_FILE` variable. In
  * production the first getConfig() call is the single trigger.
  */
-export function resolveFileBackedEnvVars(): void {
+function resolveFileBackedEnvVars(): void {
   for (const name of FILE_BACKED_ENV_VARS) {
     const filePath = process.env[`${name}_FILE`];
     if (!filePath) continue;
@@ -77,6 +86,10 @@ const envBoolean = (defaultValue: boolean) =>
 const envSchema = z.object({
   DATABASE_PROVIDER: z.enum(['pglite', 'postgres']).default('pglite'),
   DATABASE_URL: z.string().default('postgresql://localhost:5432/assessors_studio'),
+  // Optional. Replaces the password in DATABASE_URL, so the URL can stay
+  // in plain config while the password comes from a secret file
+  // (DATABASE_PASSWORD_FILE) shared with the postgres container.
+  DATABASE_PASSWORD: z.string().optional(),
   PGLITE_DATA_DIR: z.string().default('./data/pglite'),
   // Optional. If unset, the backend generates a secret on first run
   // and persists it in the app_config table. Set this in environments
@@ -87,6 +100,10 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // HSTS directives that reach beyond this host: opt in only when every
+  // subdomain serves HTTPS (and, for preload, after submitting the domain).
+  HSTS_INCLUDE_SUBDOMAINS: envBoolean(false),
+  HSTS_PRELOAD: envBoolean(false),
 
   // Self service registration gate.
   //   disabled    — reject every POST /register request (default).
@@ -151,6 +168,9 @@ const envSchema = z.object({
   // Prometheus metrics
   METRICS_ENABLED: envBoolean(false),
   METRICS_TOKEN: z.string().default(''),
+  // SETUP_TOKEN: fixed one-time token for the first-run setup wizard.
+  // When unset, a random token is generated at boot and printed to the log.
+  SETUP_TOKEN: z.string().min(16).optional(),
   METRICS_PREFIX: z.string().default('cdxa_'),
   METRICS_DOMAIN_REFRESH_INTERVAL: z.coerce.number().int().positive().default(60),
 
@@ -233,16 +253,30 @@ export function getConfig(): Env {
       throw new Error(`Invalid environment configuration: ${errors}`);
     }
 
-    config = result.data;
+    config = withDatabasePassword(result.data);
   }
 
   return config;
+}
+
+/** Puts DATABASE_PASSWORD (when set) into DATABASE_URL. */
+function withDatabasePassword(env: Env): Env {
+  if (!env.DATABASE_PASSWORD) return env;
+  let url: URL;
+  try {
+    url = new URL(env.DATABASE_URL);
+  } catch {
+    throw new Error('Invalid environment configuration: DATABASE_URL must be a URL when DATABASE_PASSWORD is set');
+  }
+  url.password = encodeURIComponent(env.DATABASE_PASSWORD);
+  return { ...env, DATABASE_URL: url.toString() };
 }
 
 /**
  * Invalidate the cached config so the next getConfig() call
  * re-reads process.env.  Used by test helpers that override
  * environment variables after the module has been loaded.
+ * @internal Test seam; not part of the module API.
  */
 export function resetConfig(): void {
   config = null;
@@ -262,6 +296,19 @@ export function resetConfig(): void {
  * that only want the cached config should use getConfig().
  */
 export function validateStartupConfig(cfg: Env = getConfig()): void {
+  // Behind a reverse proxy with TRUST_PROXY_HOPS=0, every request appears
+  // to come from the proxy: rate limits become one bucket for the whole
+  // organization (one caller can lock everyone out of sign-in) and audit
+  // IPs are all the proxy's (security review A2/W1). An https APP_URL in
+  // production almost always means a TLS-terminating proxy.
+  if (cfg.NODE_ENV === 'production' && cfg.TRUST_PROXY_HOPS === 0 && cfg.APP_URL?.startsWith('https://')) {
+    console.warn(
+      '[config] TRUST_PROXY_HOPS=0 with an https APP_URL: if a reverse proxy terminates TLS, ' +
+        'set TRUST_PROXY_HOPS to the number of proxies in front of the app, or every user ' +
+        'shares one rate-limit bucket.',
+    );
+  }
+
   // Metrics endpoint is only safe to expose when a bearer token is
   // configured. Without it the endpoint serves internal counters
   // unauthenticated and can leak operational signal to anyone that

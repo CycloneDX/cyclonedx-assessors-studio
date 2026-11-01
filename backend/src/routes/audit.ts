@@ -1,8 +1,9 @@
 import { Router } from 'express';
+import { queryString } from '../utils/query.js';
 import type { Response } from 'express';
 import { getDatabase } from '../db/connection.js';
 import { asyncHandler } from '../utils/route-helpers.js';
-import { type AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
+import { type AuthRequest, requireSession, requirePermission } from '../middleware/auth.js';
 import { validatePagination } from '../utils/pagination.js';
 
 const router = Router();
@@ -48,6 +49,7 @@ const ENTITY_NAME_MAP: Record<string, { table: string; nameColumn: string }> = {
   auth: { table: 'app_user', nameColumn: 'display_name' },
   api_key: { table: 'api_key', nameColumn: 'name' },
   attestation: { table: 'attestation', nameColumn: 'summary' },
+  mitigation: { table: 'mitigation', nameColumn: 'title' },
 };
 
 interface AuditRowWithNames {
@@ -70,7 +72,7 @@ interface AuditRowWithNames {
  * size. Missing rows surface as `null` on the enriched fields and the
  * UI falls back to showing the ID.
  */
-async function enrichWithNames(
+export async function enrichWithNames(
   // biome-ignore lint/suspicious/noExplicitAny: Kysely's selectAll rows are the DB shape; we re-type at the boundary
   rows: any[],
 ): Promise<AuditRowWithNames[]> {
@@ -139,18 +141,18 @@ async function enrichWithNames(
   }));
 }
 
-router.get('/', requireAuth, requirePermission('admin.audit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+router.get('/', requireSession, requirePermission('admin.audit'), asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
   const { limit, offset } = validatePagination(req.query);
-  const entityType = req.query.entityType as string | undefined;
-  const entityId = req.query.entityId as string | undefined;
-  const userId = req.query.userId as string | undefined;
-  const action = req.query.action as string | undefined;
+  const entityType = queryString(req.query.entityType);
+  const entityId = queryString(req.query.entityId);
+  const userId = queryString(req.query.userId);
+  const action = queryString(req.query.action);
   // Date range bounds. Parsed server side so the time zone conversion
   // happens in one place; invalid inputs are ignored rather than
   // rejected so a typo in the URL does not 400 the whole page.
-  const fromRaw = req.query.from as string | undefined;
-  const toRaw = req.query.to as string | undefined;
+  const fromRaw = queryString(req.query.from);
+  const toRaw = queryString(req.query.to);
   const fromDate = fromRaw ? new Date(fromRaw) : undefined;
   const toDate = toRaw ? new Date(toRaw) : undefined;
   const validFrom = fromDate && !Number.isNaN(fromDate.getTime()) ? fromDate : undefined;
@@ -228,7 +230,7 @@ router.get('/', requireAuth, requirePermission('admin.audit'), asyncHandler(asyn
  */
 router.get(
   '/options',
-  requireAuth,
+  requireSession,
   requirePermission('admin.audit'),
   asyncHandler(async (_req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();
@@ -248,7 +250,7 @@ router.get(
 
 router.get(
   '/entity/:entityType/:entityId',
-  requireAuth,
+  requireSession,
   requirePermission('admin.audit'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
     const db = getDatabase();

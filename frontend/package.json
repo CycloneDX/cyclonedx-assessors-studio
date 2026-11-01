@@ -18,28 +18,34 @@
   "dependencies": {
     "@element-plus/icons-vue": "2.3.2",
     "@types/d3": "7.4.3",
-    "axios": "1.15.2",
+    "@types/topojson-client": "^3.1.5",
+    "axios": "1.20.0",
     "chart.js": "4.5.1",
     "d3": "7.9.0",
     "element-plus": "2.13.6",
-    "grid-layout-plus": "1.1.1",
     "pinia": "3.0.4",
-    "vue": "3.5.32",
-    "vue-chartjs": "5.3.3",
-    "vue-i18n": "11.3.2",
+    "topojson-client": "^3.1.0",
+    "vue": "3.5.44",
+    "vue-i18n": "11.4.16",
     "vue-router": "5.0.4"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "25.5.2",
+    "@types/topojson-specification": "1.0.5",
     "@vitejs/plugin-vue": "6.0.5",
-    "@vue/test-utils": "2.4.6",
+    "@vitest/coverage-v8": "4.1.12",
+    "@vue/test-utils": "2.5.1",
     "@vue/tsconfig": "0.9.1",
-    "jsdom": "29.0.2",
+    "jsdom": "29.1.1",
     "sass-embedded": "1.99.0",
     "typescript": "6.0.2",
-    "vite": "8.0.8",
-    "vitest": "4.1.4",
-    "@vitest/coverage-v8": "4.1.4",
+    "vite": "8.3.5",
+    "vitest": "4.1.12",
     "vue-tsc": "3.2.6"
+  },
+  "overrides": {
+    "qs": "6.16.1"
   }
 }

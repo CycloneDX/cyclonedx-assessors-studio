@@ -34,5 +34,10 @@
     "clean": "rm -rf backend/dist backend/data frontend/dist tests/e2e/test-results tests/e2e/playwright-report tests/e2e/auth/storage-states/*.json",
     "version:set": "node scripts/bump-version.mjs",
     "version:check": "node scripts/check-version.mjs"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "8.71.1",
+    "eslint": "10.12.0",
+    "vue-eslint-parser": "10.4.1"
   }
 }

@@ -83,6 +83,8 @@ export interface Assessment {
   completedCount: number
   progress: number
   conformanceScore?: number | null
+  assessmentType: 'standards' | 'targeted' | 'tasks'
+  taskLabel?: string | null
   createdAt: string
 }
 
@@ -93,16 +95,36 @@ export interface AssessmentRequirement {
   assessmentId: string
   requirementId: string
   requirement?: Requirement
+  // joined fields from requirement table
+  identifier?: string
+  name?: string
+  title?: string
+  description?: string
   result?: 'yes' | 'no' | 'na' | 'partial' | 'not_applicable'
   rationale: string
   evidenceLink?: string
   status: 'pending' | 'assessed' | 'confirmed'
+  owner?: string | null
+  ownerEmail?: string | null
+  ownerRole?: string | null
+  oeEntity?: string | null
+  businessUnit?: string | null
+  region?: string | null
+  assessedBy?: string | null
+  assessmentDate?: string | null
+  nextReviewDate?: string | null
+  conformanceScore?: number | null
+  conformanceRationale?: string | null
+  confidenceScore?: number | null
+  confidenceRationale?: string | null
 }
 
 export interface Evidence {
   id: string
+  displayId?: number
   name: string
   description: string
+  evidenceNotes?: string | null
   state: EvidenceState
   classification: string
   author: string
@@ -112,15 +134,23 @@ export interface Evidence {
   reviewerId?: string
   reviewerName?: string
   isCounterEvidence: boolean
+  type?: 'proof' | 'counter_evidence' | 'mitigation_strategy' | null
+  owner?: string | null
+  geoLatitude?: number | null
+  geoLongitude?: number | null
+  geoLabel?: string | null
   createdAt: string
   updatedAt: string
   expiresAt?: string
   expiresOn?: string
   attachments: Attachment[]
   requirementIds?: string[]
+  claimsCount?: number
+  assessmentCount?: number
+  directLink?: boolean
 }
 
-export type EvidenceState = 'draft' | 'submitted' | 'reviewed' | 'approved' | 'archived' | 'claimed' | 'in_progress' | 'in_review'
+export type EvidenceState = 'draft' | 'submitted' | 'reviewed' | 'approved' | 'archived' | 'claimed' | 'in_progress' | 'in_review' | 'expired'
 
 export interface Attachment {
   id: string
@@ -133,12 +163,54 @@ export interface Attachment {
 
 export interface Claim {
   id: string
+  displayId?: number
   name: string
   target: string
   predicate: string
-  evidenceCount: number
+  reasoning?: string
+  status: string
+  workNotes?: string | null
+  evidenceCount?: number
+  mitigationCount?: number
   isCounterClaim: boolean
   attestationId?: string
+  claimType?: string | null
+  confidence?: string | null
+  projectName?: string | null
+  projectRequirement?: string | null
+  framework?: string | null
+  assessor?: string | null
+  claimDate?: string | null
+  linkedMitigations?: { id: string; title: string; status: string; priority: string; type: string; owner?: string | null }[]
+  linkedEvidence?: { id: string; name: string; state: string; description?: string }[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface Mitigation {
+  id: string
+  displayId?: number
+  mitigationId?: string
+  title: string
+  type: string
+  category?: string
+  priority: string
+  status: string
+  effectiveness?: string
+  description?: string
+  owner?: string
+  notes?: string
+  linkedClaims?: { id: string; name: string; status?: string }[]
+  linkedEvidence?: { id: string; name: string; state: string }[]
+  team?: string | null
+  reviewer?: string | null
+  linkedAssessment?: string | null
+  targetDate?: string | null
+  completionDate?: string | null
+  verifiedBy?: string | null
+  effectivenessRationale?: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Attestation {
@@ -205,6 +277,11 @@ export interface Entity {
   standards?: Standard[]
   childCount?: number
   assessmentCount?: number
+  parentName?: string | null
+  country?: string | null
+  region?: string | null
+  locality?: string | null
+  timezone?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -261,4 +338,28 @@ export interface PaginatedResponse<T> {
   page: number
   pageSize: number
   totalPages: number
+}
+
+export type ScheduledAssessmentStatus = 'scheduled' | 'in_progress' | 'on_hold' | 'complete' | 'failed' | 'warning'
+export type ScheduledAssessmentRecurrence = 'none' | 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+
+export interface ScheduledAssessment {
+  id: string
+  title: string
+  description?: string | null
+  projectId?: string | null
+  projectName?: string | null
+  assessorId?: string | null
+  assessorName?: string | null
+  standardId?: string | null
+  standardName?: string | null
+  assessmentId?: string | null
+  scheduledDate: string
+  dueDate?: string | null
+  recurrence: ScheduledAssessmentRecurrence
+  status: ScheduledAssessmentStatus
+  notes?: string | null
+  createdBy?: string | null
+  createdAt: string
+  updatedAt: string
 }

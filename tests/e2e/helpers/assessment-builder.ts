@@ -37,9 +37,9 @@ export interface CompletedAssessmentFixture {
 
 export async function buildCompletedAssessment(
   api: APIRequestContext,
-  opts: { linkEvidence?: boolean; complete?: boolean } = {},
+  opts: { linkEvidence?: boolean; complete?: boolean; assessorIds?: string[] } = {},
 ): Promise<CompletedAssessmentFixture> {
-  const { linkEvidence = true, complete = true } = opts;
+  const { linkEvidence = true, complete = true, assessorIds } = opts;
 
   const standards = await api.get('/api/v1/standards?limit=100').then((r) => r.json());
   const baseline = (
@@ -61,7 +61,10 @@ export async function buildCompletedAssessment(
 
   const assessment = await api
     .post('/api/v1/assessments', {
-      data: { title: uniqueAssessmentTitle(), standardId: baseline.id },
+      // assessorIds: writes on an assessment are limited to its assigned
+      // assessors (security review Z8), so callers that act as an
+      // assessor must be assigned here.
+      data: { title: uniqueAssessmentTitle(), standardId: baseline.id, ...(assessorIds ? { assessorIds } : {}) },
     })
     .then((r) => r.json());
   expect(assessment.id, 'assessment.id missing on create').toBeTruthy();

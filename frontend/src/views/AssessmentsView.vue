@@ -95,6 +95,26 @@
         <el-form-item :label="t('common.description')">
           <el-input v-model="createForm.description" type="textarea" />
         </el-form-item>
+        <el-form-item label="Assessment Type" required>
+          <el-radio-group v-model="createForm.assessmentType">
+            <el-radio-button value="standards">Standards</el-radio-button>
+            <el-radio-button value="targeted">Targeted</el-radio-button>
+            <el-radio-button value="tasks">Tasks</el-radio-button>
+          </el-radio-group>
+          <div class="form-hint">
+            <template v-if="createForm.assessmentType === 'targeted'">Assess a hand-picked subset of requirements from a standard (e.g. pen test scope).</template>
+            <template v-else-if="createForm.assessmentType === 'tasks'">Freeform work — sign-offs, evidence gathering, pen test prep, or any ad-hoc activity. No standard required.</template>
+            <template v-else>Assess all requirements from the linked standard.</template>
+          </div>
+        </el-form-item>
+
+        <!-- Task label — only for tasks type -->
+        <el-form-item v-if="createForm.assessmentType === 'tasks'" label="Task Type" required>
+          <el-input v-model="createForm.taskLabel" placeholder="e.g. Pen Test Prep" maxlength="25" show-word-limit />
+          <div class="form-hint">Short label (max 25 chars) describing the type of task work.</div>
+        </el-form-item>
+
+        <template v-if="createForm.assessmentType !== 'tasks'">
         <div class="mb-4 pb-3 border-b-default">
           <span class="text-size-13 font-semibold text-secondary">Assessment Scope</span>
           <p class="text-xs text-tertiary mt-2">Select what you are assessing and which standard to use.</p>
@@ -132,6 +152,23 @@
           </el-select>
           <div class="form-hint">{{ t('assessments.standardsHint') }}</div>
         </el-form-item>
+        </template>
+
+        <!-- Target entity for tasks (no standard needed) -->
+        <template v-else>
+        <el-form-item label="Assessment Target">
+          <el-select v-model="createForm.entityId" :placeholder="t('assessments.filterByProject')" clearable>
+            <el-option v-for="entity in entities" :key="entity.id" :label="entity.name" :value="entity.id"></el-option>
+          </el-select>
+          <div class="form-hint">The organization, team, or product this task relates to</div>
+        </el-form-item>
+        <el-form-item :label="t('assessments.project')" class="optional-field">
+          <el-select v-model="createForm.projectId" :placeholder="t('assessments.filterByProject')" clearable>
+            <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id"></el-option>
+          </el-select>
+          <div class="form-hint">{{ t('assessments.projectHint') }}</div>
+        </el-form-item>
+        </template>
         <el-form-item :label="t('assessments.dueDate')">
           <el-date-picker v-model="createForm.dueDate" type="date" />
         </el-form-item>
@@ -177,7 +214,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import axios from 'axios'
+import client from '@/api/client'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import PageHeader from '@/components/shared/PageHeader.vue'
@@ -215,16 +252,12 @@ const createForm = ref({
   description: '',
   entityId: null as string | null,
   projectId: '',
-  // Single standard id. The backend stores one standard_id per
-  // assessment (see migrate.ts). Earlier revisions of this form kept a
-  // separate `standardIds` array for the "ad hoc" path; that array was
-  // silently dropped server side because the backend schema only
-  // recognized `standardId`. Use one field for all scopes (entity,
-  // project, none) and let the handler send `payload.standardId`.
   standardId: null as string | null,
   dueDate: null as unknown,
   assessorIds: [] as string[],
   assesseeIds: [] as string[],
+  assessmentType: 'standards' as 'standards' | 'targeted' | 'tasks',
+  taskLabel: '',
 })
 
 onMounted(() => {
@@ -258,7 +291,7 @@ watch(() => createForm.value.projectId, () => {
 
 const fetchProjects = async () => {
   try {
-    const response = await axios.get('/api/v1/projects')
+    const response = await client.get('/projects')
     projects.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to fetch projects:', err)
@@ -267,7 +300,7 @@ const fetchProjects = async () => {
 
 const fetchStandards = async () => {
   try {
-    const response = await axios.get('/api/v1/standards')
+    const response = await client.get('/standards')
     standards.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to fetch standards:', err)
@@ -276,7 +309,7 @@ const fetchStandards = async () => {
 
 const fetchAssignableUsers = async () => {
   try {
-    const response = await axios.get('/api/v1/users/assignable')
+    const response = await client.get('/users/assignable')
     assignableUsers.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to fetch assignable users:', err)
@@ -285,7 +318,7 @@ const fetchAssignableUsers = async () => {
 
 const fetchEntities = async () => {
   try {
-    const response = await axios.get('/api/v1/entities')
+    const response = await client.get('/entities')
     entities.value = response.data.data || []
   } catch (err: unknown) {
     console.error('Failed to fetch entities:', err)
@@ -294,7 +327,7 @@ const fetchEntities = async () => {
 
 const fetchEntityStandards = async (entityId: string) => {
   try {
-    const response = await axios.get(`/api/v1/entities/${entityId}`)
+    const response = await client.get(`/entities/${entityId}`)
     const entity = response.data.data
     entityStandards.value = entity?.standards || []
   } catch (err: unknown) {
@@ -318,7 +351,8 @@ const fetchAssessments = async () => {
       params.myOnly = 'true'
     }
 
-    const response = await axios.get('/api/v1/assessments', { params })
+    params.limit = 100
+    const response = await client.get('/assessments', { params })
     assessments.value = response.data.data || []
   } catch (err: unknown) {
     error.value = apiErrorMessage(err, t('common.error'))
@@ -367,8 +401,15 @@ const handleCreate = async () => {
   // Without this guard, the user could create an assessment with no
   // standard and then hit a 400 only when clicking Start — the symptom
   // chain in issue #19.
-  if (!createForm.value.standardId) {
+  const isTask = createForm.value.assessmentType === 'tasks'
+
+  if (!isTask && !createForm.value.standardId) {
     ElMessage.error(t('assessments.selectStandards'))
+    return
+  }
+
+  if (isTask && !createForm.value.taskLabel.trim()) {
+    ElMessage.error('Task Type label is required')
     return
   }
 
@@ -379,19 +420,25 @@ const handleCreate = async () => {
       description: createForm.value.description,
       projectId: createForm.value.projectId || null,
       entityId: createForm.value.entityId || undefined,
-      // Single source of truth: every create path sends the picked
-      // standard as `standardId`. The backend's compatibility alias
-      // `standardIds` is no longer used by this form.
-      standardId: createForm.value.standardId,
+      standardId: isTask ? null : createForm.value.standardId,
       dueDate: createForm.value.dueDate ? (createForm.value.dueDate as { toISOString: () => string }).toISOString().split('T')[0] : null,
       assessorIds: createForm.value.assessorIds.length > 0 ? createForm.value.assessorIds : undefined,
       assesseeIds: createForm.value.assesseeIds.length > 0 ? createForm.value.assesseeIds : undefined,
+      assessmentType: createForm.value.assessmentType,
+      taskLabel: isTask ? createForm.value.taskLabel.trim() : undefined,
     }
 
-    await axios.post('/api/v1/assessments', payload)
+    const response = await client.post('/assessments', payload)
+    const isTargeted = createForm.value.assessmentType === 'targeted'
     ElMessage.success(t('assessments.assessmentCreated'))
     showCreateDialog.value = false
     resetCreateForm()
+
+    if (isTargeted || isTask) {
+      router.push(`/assessments/${response.data.id}/setup`)
+      return
+    }
+
     await fetchAssessments()
   } catch (err: unknown) {
     ElMessage.error(apiErrorMessage(err, t('common.errorOccurred')))
@@ -409,7 +456,9 @@ const resetCreateForm = () => {
     standardId: null,
     dueDate: null,
     assessorIds: [],
-    assesseeIds: []
+    assesseeIds: [],
+    assessmentType: 'standards',
+    taskLabel: '',
   }
   entityStandards.value = []
 }
@@ -422,7 +471,7 @@ const deleteAssessment = (row: Record<string, unknown>) => {
   })
     .then(async () => {
       try {
-        await axios.delete(`/api/v1/assessments/${row.id as string}`)
+        await client.delete(`/assessments/${row.id as string}`)
         ElMessage.success('Assessment deleted successfully')
         await fetchAssessments()
       } catch (err: unknown) {

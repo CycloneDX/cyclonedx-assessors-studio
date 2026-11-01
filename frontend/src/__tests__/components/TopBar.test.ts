@@ -238,14 +238,14 @@ describe('TopBar.vue', () => {
       mountTopBar()
       await flushPromises()
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/notifications/count')
+      expect(axios.get).toHaveBeenCalledWith('/notifications/count')
     })
 
     it('should fetch notifications on mount', async () => {
       mountTopBar()
       await flushPromises()
 
-      expect(axios.get).toHaveBeenCalledWith('/api/v1/notifications')
+      expect(axios.get).toHaveBeenCalledWith('/notifications')
     })
 
     it('should handle notification fetch errors', async () => {
@@ -272,4 +272,22 @@ describe('TopBar.vue', () => {
       expect(wrapper.vm.$el).toBeDefined()
     })
   })
+
+  describe('marking notifications read', () => {
+    // The API is PUT /notifications/:id/read and PUT /notifications/read-all.
+    it('marks one notification read with PUT /notifications/:id/read', async () => {
+      const wrapper = mountTopBar()
+      await (wrapper.vm as any).handleNotificationClick({ id: 'n1', title: 't', message: 'm', isRead: false })
+      expect(axios.put).toHaveBeenCalledWith('/notifications/n1/read')
+      expect(axios.post).not.toHaveBeenCalledWith('/notifications/n1/read')
+    })
+
+    it('marks all read with PUT /notifications/read-all', async () => {
+      const wrapper = mountTopBar()
+      await (wrapper.vm as any).handleMarkAllRead()
+      expect(axios.put).toHaveBeenCalledWith('/notifications/read-all')
+      expect(axios.post).not.toHaveBeenCalled()
+    })
+  })
 })
+

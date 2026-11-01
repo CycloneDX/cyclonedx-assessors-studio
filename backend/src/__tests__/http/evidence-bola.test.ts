@@ -193,11 +193,14 @@ describe('Evidence BOLA regressions (F01 / F02)', () => {
       expect(res.status).toBe(404);
     });
 
-    it('returns 200 to an insider (linked via assessment_requirement_evidence)', async () => {
+    it('returns 404 to a participant who is neither author nor reviewer (participation no longer grants evidence visibility)', async () => {
+      // Least-privilege policy: a non-view_all caller (assessee) sees only
+      // evidence they authored or were assigned to review. The insider here is
+      // an assessee on the assessment but not the author (admin is), so
+      // participation alone must not expose the evidence.
       const agent = await loginAsUsername(fixtures.insiderUser.username, fixtures.insiderUser.password);
       const res = await agent.get(`/api/v1/evidence/${fixtures.evidenceId}`);
-      expect(res.status).toBe(200);
-      expect(res.body.evidence.id).toBe(fixtures.evidenceId);
+      expect(res.status).toBe(404);
     });
 
     it('returns 200 to admin via evidence.view_all permission', async () => {
@@ -212,11 +215,10 @@ describe('Evidence BOLA regressions (F01 / F02)', () => {
       expect(res.status).toBe(404);
     });
 
-    it('returns 200 to an insider on GET /evidence/:id/claims', async () => {
+    it('returns 404 to a non-author/non-reviewer participant on GET /evidence/:id/claims', async () => {
       const agent = await loginAsUsername(fixtures.insiderUser.username, fixtures.insiderUser.password);
       const res = await agent.get(`/api/v1/evidence/${fixtures.evidenceId}/claims`);
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('data');
+      expect(res.status).toBe(404);
     });
 
     it('returns 404 to an outsider on GET /evidence/:id/attachments/:attId/download', async () => {
@@ -225,11 +227,10 @@ describe('Evidence BOLA regressions (F01 / F02)', () => {
       expect(res.status).toBe(404);
     });
 
-    it('returns 200 to an insider on the attachment download', async () => {
+    it('returns 404 to a non-author/non-reviewer participant on the attachment download', async () => {
       const agent = await loginAsUsername(fixtures.insiderUser.username, fixtures.insiderUser.password);
       const res = await agent.get(`/api/v1/evidence/${fixtures.evidenceId}/attachments/${fixtures.attachmentId}/download`);
-      expect(res.status).toBe(200);
-      expect(res.text || res.body?.toString?.()).toContain('hello');
+      expect(res.status).toBe(404);
     });
   });
 

@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 const DEFAULT_PERMISSIONS = [
   // Projects
   { key: 'projects.view', name: 'View Projects', description: 'View project list and details', category: 'projects' },
+  { key: 'projects.view_all', name: 'View All Projects', description: 'View all projects regardless of assessment participation', category: 'projects' },
   { key: 'projects.create', name: 'Create Projects', description: 'Create new projects', category: 'projects' },
   { key: 'projects.edit', name: 'Edit Projects', description: 'Edit existing projects', category: 'projects' },
   { key: 'projects.delete', name: 'Delete Projects', description: 'Delete or retire projects', category: 'projects' },
@@ -35,6 +36,7 @@ const DEFAULT_PERMISSIONS = [
   { key: 'evidence.delete', name: 'Delete Evidence', description: 'Delete or expire evidence', category: 'evidence' },
   // Claims
   { key: 'claims.view', name: 'View Claims', description: 'View claims', category: 'claims' },
+  { key: 'claims.view_all', name: 'View All Claims', description: 'View all claims regardless of assessment participation', category: 'claims' },
   { key: 'claims.create', name: 'Create Claims', description: 'Create new claims', category: 'claims' },
   { key: 'claims.edit', name: 'Edit Claims', description: 'Edit claims', category: 'claims' },
   // Attestations
@@ -87,10 +89,12 @@ const DEFAULT_ROLES = [
     name: 'Assessor',
     description: 'Can conduct assessments, manage evidence, create claims and attestations',
     permissions: [
-      'projects.view', 'standards.view', 'entities.view',
-      'assessments.view', 'assessments.create', 'assessments.edit', 'assessments.manage', 'assessments.notes',
-      'evidence.view', 'evidence.create', 'evidence.edit', 'evidence.review',
-      'claims.view', 'claims.create', 'claims.edit',
+      // Assessors see all data across the platform (but no admin panels), so
+      // they hold every *.view_all key alongside the base view permissions.
+      'projects.view', 'projects.view_all', 'standards.view', 'entities.view',
+      'assessments.view', 'assessments.view_all', 'assessments.create', 'assessments.edit', 'assessments.manage', 'assessments.notes',
+      'evidence.view', 'evidence.view_all', 'evidence.create', 'evidence.edit', 'evidence.review',
+      'claims.view', 'claims.view_all', 'claims.create', 'claims.edit',
       'attestations.view', 'attestations.create', 'attestations.edit', 'attestations.sign', 'attestations.export',
       'signatures.manage', 'signatures.sign',
       'export.pdf', 'export.cyclonedx',

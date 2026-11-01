@@ -1,17 +1,54 @@
 import { Router } from 'express';
+import { clampPagination } from '../utils/pagination.js';
 import type { Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import type { Selectable } from 'kysely';
 import { getDatabase } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
-import { asyncHandler, handleValidationError } from '../utils/route-helpers.js';
+import { asyncHandler, handleValidationError, parseBody } from '../utils/route-helpers.js';
 import { AuthRequest, requireAuth, requirePermission } from '../middleware/auth.js';
 import { toSnakeCase } from '../middleware/camelCase.js';
 import { importStandard } from '../services/standard-import.js';
+import { checkFeedForUpdates, fetchStandardBom, invalidateFeedCache } from '../services/standard-feed.js';
 import { buildRequirementTree, topologicalSort } from '../services/requirement-utils.js';
 import { generateStandardCycloneDX } from '../services/standard-export.js';
 import type { Standard } from '../db/types.js';
+
+
+// Request bodies (security review I9). Fields stay optional where the
+// handlers already apply their own required-field and business rules.
+const optText = (max: number) => z.string().max(max).nullable().optional();
+const standardBodySchema = z.object({
+  name: z.string().max(255).optional(),
+  identifier: z.string().max(255).optional(),
+  version: optText(50),
+  owner: optText(255),
+  description: optText(20_000),
+});
+const rejectBodySchema = z.object({ reason: optText(5_000) });
+const createRequirementBodySchema = z.object({
+  identifier: z.string().max(255).optional(),
+  name: z.string().max(1_000).optional(),
+  description: optText(100_000),
+  open_cre: z.union([z.array(z.string().max(255)), z.string().max(255)]).nullable().optional(),
+  parentIdentifier: optText(255),
+  parentId: z.string().uuid().nullable().optional(),
+});
+const updateRequirementBodySchema = z.object({
+  identifier: z.string().max(255).optional(),
+  name: z.string().max(1_000).optional(),
+  description: optText(100_000),
+  openCre: z.union([z.array(z.string().max(255)), z.string().max(255)]).nullable().optional(),
+  parentId: z.string().uuid().nullable().optional(),
+});
+const levelBodySchema = z.object({
+  identifier: z.string().max(255).optional(),
+  title: z.string().max(1_000).optional(),
+  description: optText(20_000),
+});
+const levelRequirementsBodySchema = z.object({ requirementIds: z.array(z.string().uuid()).max(10_000) });
+const reparentBodySchema = z.object({ parent_id: z.string().uuid().nullable() });
 
 const router = Router();
 
@@ -63,9 +100,15 @@ const importStandardSchema = z.object({
 
 router.get('/', requireAuth, asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
   const db = getDatabase();
-  const limit = Math.min(Number(req.query.limit) || 50, 100);
-  const offset = Number(req.query.offset) || 0;
-  const stateFilter = req.query.state as 'draft' | 'in_review' | 'published' | 'retired' | undefined;
+  // Clamped: negative/fractional values used to reach SQL and 500 (I8).
+  const { limit, offset } = clampPagination(req.query as Record<string, unknown>);
+  const STATES = ['draft', 'in_review', 'published', 'retired'] as const;
+  const rawState = req.query.state;
+  if (rawState !== undefined && !STATES.includes(rawState as (typeof STATES)[number])) {
+    res.status(400).json({ error: `state must be one of: ${STATES.join(', ')}` });
+    return;
+  }
+  const stateFilter = rawState as (typeof STATES)[number] | undefined;
 
   let query = db.selectFrom('standard');
   if (stateFilter) {
@@ -313,7 +356,9 @@ router.post(
   requireAuth,
   requirePermission('standards.create'),
   asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
-    const { name, identifier, version, owner, description } = req.body;
+    const body = parseBody(standardBodySchema, req.body, res);
+    if (!body) return;
+    const { name, identifier, version, owner, description } = body;
 
     if (!name || !identifier) {
       res.status(400).json({ error: 'Missing required fields: name and identifier' });
@@ -378,7 +423,9 @@ router.put(
       return;
     }
 
-    const { name, identifier, version, owner, description } = req.body;
+    const body = parseBody(standardBodySchema, req.body, res);
+    if (!body) return;
+    const { name, identifier, version, owner, description } = body;
 
     try {
       await db
@@ -561,7 +608,9 @@ router.post(
       return;
     }
 
-    const { reason } = req.body;
+    const body = parseBody(rejectBodySchema, req.body, res);
+    if (!body) return;
+    const { reason } = body;
 
     await db
       .updateTable('standard')
@@ -833,7 +882,9 @@ router.post(
       return;
     }
 
-    const { identifier, name, description, open_cre, parentIdentifier, parentId: bodyParentId } = req.body;
+    const body = parseBody(createRequirementBodySchema, req.body, res);
+    if (!body) return;
+    const { identifier, name, description, open_cre, parentIdentifier, parentId: bodyParentId } = body;
 
     if (!identifier || !name) {
       res.status(400).json({ error: 'Missing required fields: identifier and name' });
@@ -923,7 +974,9 @@ router.put(
       return;
     }
 
-    const { identifier, name, description, openCre, parentId } = req.body;
+    const body = parseBody(updateRequirementBodySchema, req.body, res);
+    if (!body) return;
+    const { identifier, name, description, openCre, parentId } = body;
 
     // Validate parentId if provided (prevent self-reference and circular references)
     if (parentId !== undefined && parentId !== null) {
@@ -1052,7 +1105,9 @@ router.post(
     if (!standard) { res.status(404).json({ error: 'Standard not found' }); return; }
     if (standard.state !== 'draft') { res.status(403).json({ error: 'Can only add levels to draft standards' }); return; }
 
-    const { identifier, title, description } = req.body;
+    const body = parseBody(levelBodySchema, req.body, res);
+    if (!body) return;
+    const { identifier, title, description } = body;
     if (!identifier) { res.status(400).json({ error: 'Missing required field: identifier' }); return; }
 
     const levelId = uuidv4();
@@ -1102,7 +1157,9 @@ router.put(
 
     if (!level) { res.status(404).json({ error: 'Level not found' }); return; }
 
-    const { identifier, title, description } = req.body;
+    const body = parseBody(levelBodySchema, req.body, res);
+    if (!body) return;
+    const { identifier, title, description } = body;
 
     try {
       await db
@@ -1175,7 +1232,9 @@ router.put(
 
     if (!level) { res.status(404).json({ error: 'Level not found' }); return; }
 
-    const { requirementIds } = req.body;
+    const body = parseBody(levelRequirementsBodySchema, req.body, res);
+    if (!body) return;
+    const { requirementIds } = body;
     if (!Array.isArray(requirementIds)) { res.status(400).json({ error: 'requirementIds must be an array' }); return; }
 
     // Clear existing and re-insert
@@ -1359,7 +1418,9 @@ router.put(
       return;
     }
 
-    const { parent_id: newParentId } = req.body;
+    const body = parseBody(reparentBodySchema, req.body, res);
+    if (!body) return;
+    const { parent_id: newParentId } = body;
 
     // Prevent self-reference
     if (newParentId === req.params.reqId) {
@@ -1414,6 +1475,96 @@ router.put(
     });
 
     res.json({ success: true });
+  })
+);
+
+// ─── Feed / update-check routes ───────────────────────────────────────────────
+
+/**
+ * GET /api/v1/standards/feed/check
+ * Returns standards available in the upstream CycloneDX catalogue that are
+ * not yet imported into this instance.  Results are cached for 1 hour;
+ * pass ?force=true to bypass the cache (admin only).
+ */
+router.get(
+  '/feed/check',
+  requireAuth,
+  requirePermission('standards.import'),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    const force = req.query.force === 'true';
+    const result = await checkFeedForUpdates(force);
+    res.json(result);
+  })
+);
+
+const feedImportSchema = z.object({
+  downloadUrl: z.string().url().max(2048).refine((u) => u.startsWith('https://')),
+  title: z.string().max(500).optional(),
+});
+
+/**
+ * POST /api/v1/standards/feed/import
+ * Fetch a standard BOM from the upstream URL provided in the request body
+ * and import it into the local DB via the canonical importStandard() service.
+ *
+ * Body: { downloadUrl: string; title: string }
+ */
+router.post(
+  '/feed/import',
+  requireAuth,
+  requirePermission('standards.import'),
+  asyncHandler(async (req: AuthRequest, res: Response): Promise<void> => {
+    const parsedBody = feedImportSchema.safeParse(req.body);
+    if (!parsedBody.success) {
+      res.status(400).json({ error: 'downloadUrl must be an https URL' });
+      return;
+    }
+    const { downloadUrl, title } = parsedBody.data;
+
+    let bom: Record<string, unknown>;
+    try {
+      bom = await fetchStandardBom(downloadUrl);
+    } catch (err) {
+      // Details stay in the log: the message can echo the target's
+      // response or internal DNS answers (security review I2/I10).
+      logger.warn('Standards feed import fetch failed', { downloadUrl, error: (err as Error).message, userId: req.user?.id });
+      res.status(502).json({ error: 'Failed to fetch standard from the given URL' });
+      return;
+    }
+
+    // Only a CycloneDX BOM carrying a standard is accepted. Importing any
+    // JSON object (the old fallback) let a fetched internal document be
+    // stored and read back through the standard export.
+    const definitions = bom.definitions as Record<string, unknown> | undefined;
+    const standardsArr = definitions?.standards as unknown[] | undefined;
+    const rawStandard = bom.bomFormat === 'CycloneDX' ? standardsArr?.[0] : undefined;
+    if (!rawStandard || typeof rawStandard !== 'object') {
+      res.status(422).json({ error: 'URL did not return a CycloneDX BOM with a standard definition' });
+      return;
+    }
+
+    const result = await importStandard(rawStandard as Parameters<typeof importStandard>[0], {
+      fallbackName: title ?? 'Unknown Standard',
+      markAsImported: true,
+      sourceJson: JSON.stringify(bom),
+    });
+
+    // Invalidate cache so the check endpoint reflects the newly imported standard
+    invalidateFeedCache();
+
+    if (result.skipped) {
+      res.status(409).json({ error: 'Standard is already imported', identifier: result.identifier });
+      return;
+    }
+
+    logger.info('Standard imported from feed', {
+      id: result.id,
+      name: result.name,
+      requirementCount: result.requirementCount,
+      userId: req.user?.id,
+    });
+
+    res.status(201).json(result);
   })
 );
 

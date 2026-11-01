@@ -12,7 +12,7 @@
       <!-- Step indicator dots -->
       <div class="gs-steps">
         <div
-          v-for="(s, i) in steps"
+          v-for="(_s, i) in steps"
           :key="i"
           class="step-dot"
           :class="{ active: i === currentStep, completed: i < currentStep }"
@@ -102,7 +102,7 @@ import {
   Stamp,
   SetUp,
 } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
@@ -134,7 +134,7 @@ const authStore = useAuthStore()
 const handleDismiss = async () => {
   visible.value = false
   try {
-    await axios.post('/api/v1/auth/complete-onboarding')
+    await client.post('/auth/complete-onboarding')
     if (authStore.user) {
       authStore.user.hasCompletedOnboarding = true
     }

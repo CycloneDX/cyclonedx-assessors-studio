@@ -5,6 +5,23 @@ import {
   getAgent,
 } from '../helpers/http.js';
 
+type Agent = Awaited<ReturnType<typeof loginAs>>;
+
+/**
+ * Evidence enters review only through submit-for-review (PUT and create no
+ * longer accept 'in_review'): the author creates it, then submits it to
+ * the reviewer.
+ */
+async function createInReview(author: Agent, reviewer: Agent, name: string): Promise<string> {
+  const me = await reviewer.get('/api/v1/auth/me');
+  const reviewerId = (me.body.user?.id ?? me.body.id) as string;
+  const created = await author.post('/api/v1/evidence').send({ name });
+  expect(created.status).toBe(201);
+  const submitted = await author.post(`/api/v1/evidence/${created.body.id}/submit-for-review`).send({ reviewerId });
+  expect(submitted.status).toBe(200);
+  return created.body.id as string;
+}
+
 describe('Evidence HTTP Routes', () => {
   setupHttpTests();
 
@@ -150,7 +167,9 @@ describe('Evidence HTTP Routes', () => {
       expect(res.body.state).toBe('in_progress');
     });
 
-    it('should allow creating evidence with claimed state', async () => {
+    // Security review Z11: 'claimed' (approved) is only reachable through
+    // POST /:id/approve, never at creation.
+    it('should refuse creating evidence in the claimed state', async () => {
       const agent = await loginAs('admin');
 
       const res = await agent
@@ -160,8 +179,7 @@ describe('Evidence HTTP Routes', () => {
           state: 'claimed',
         });
 
-      expect(res.status).toBe(201);
-      expect(res.body.state).toBe('claimed');
+      expect(res.status).toBe(400);
     });
 
     it('should allow creating counter evidence', async () => {
@@ -332,7 +350,7 @@ describe('Evidence HTTP Routes', () => {
 
       // Create evidence with different states
       await agent.post('/api/v1/evidence').send({ name: 'In Progress', state: 'in_progress' });
-      await agent.post('/api/v1/evidence').send({ name: 'Claimed', state: 'claimed' });
+      await agent.post('/api/v1/evidence').send({ name: 'Expired', state: 'expired' });
 
       const res = await agent.get('/api/v1/evidence?state=claimed&limit=100&offset=0');
 
@@ -580,10 +598,18 @@ describe('Evidence HTTP Routes', () => {
 
       const res = await agent
         .put(`/api/v1/evidence/${evidenceId}`)
-        .send({ state: 'claimed' });
+        .send({ state: 'expired' });
 
       expect(res.status).toBe(200);
-      expect(res.body.state).toBe('claimed');
+      expect(res.body.state).toBe('expired');
+    });
+
+    // Security review Z11: approval only through POST /:id/approve.
+    it('refuses to set the approved state directly', async () => {
+      const agent = await loginAs('admin');
+      const created = await agent.post('/api/v1/evidence').send({ name: 'No shortcut' });
+      expect((await agent.put(`/api/v1/evidence/${created.body.id}`).send({ state: 'claimed' })).status).toBe(400);
+      expect((await agent.post('/api/v1/evidence').send({ name: 'No shortcut 2', state: 'claimed' })).status).toBe(400);
     });
 
     it('should update classification', async () => {
@@ -645,9 +671,11 @@ describe('Evidence HTTP Routes', () => {
 
       const createRes = await agent.post('/api/v1/evidence').send({
         name: 'Immutable Evidence',
-        state: 'claimed',
       });
       const evidenceId = createRes.body.id;
+      // Claimed via the approval flow in real use; set directly here.
+      const { getDatabase } = await import('../../db/connection.js');
+      await getDatabase().updateTable('evidence').set({ state: 'claimed' }).where('id', '=', evidenceId).execute();
 
       const res = await agent
         .put(`/api/v1/evidence/${evidenceId}`)
@@ -1061,24 +1089,33 @@ describe('Evidence HTTP Routes', () => {
       expect(res.status).toBe(401);
     });
 
-    it('should allow assessee to submit evidence', async () => {
-      const adminAgent = await loginAs('admin');
+    it('should allow an assessee to submit their own evidence', async () => {
       const assesseeAgent = await loginAs('assessee');
 
-      const createRes = await adminAgent.post('/api/v1/evidence').send({
+      const createRes = await assesseeAgent.post('/api/v1/evidence').send({
         name: 'Submit Perm Test',
         state: 'in_progress',
       });
       const evidenceId = createRes.body.id;
 
-      // Assessee has evidence.submit permission, so this should succeed
-      // But may fail with other error (e.g., reviewer validation)
+      // May still fail on reviewer validation, but not on permission.
       const res = await assesseeAgent
         .post(`/api/v1/evidence/${evidenceId}/submit-for-review`)
         .send({ reviewerId: '00000000-0000-0000-0000-000000000000' });
 
-      // Should not be 403 (permission denied)
       expect(res.status).not.toBe(403);
+    });
+
+    // Security review Z11: evidence.submit no longer lets an assessee submit
+    // someone else's evidence and choose its reviewer.
+    it("should refuse an assessee submitting another user's evidence", async () => {
+      const adminAgent = await loginAs('admin');
+      const assesseeAgent = await loginAs('assessee');
+      const createRes = await adminAgent.post('/api/v1/evidence').send({ name: 'Not yours' });
+      const res = await assesseeAgent
+        .post(`/api/v1/evidence/${createRes.body.id}/submit-for-review`)
+        .send({ reviewerId: '00000000-0000-0000-0000-000000000000' });
+      expect(res.status).toBe(403);
     });
   });
 
@@ -1094,11 +1131,7 @@ describe('Evidence HTTP Routes', () => {
       const adminAgent = await loginAs('admin');
       const assessorAgent = await loginAs('assessor');
 
-      const createRes = await assessorAgent.post('/api/v1/evidence').send({
-        name: 'Approve Test',
-        state: 'in_review',
-      });
-      const evidenceId = createRes.body.id;
+      const evidenceId = await createInReview(assessorAgent, adminAgent, 'Approve Test');
 
       const res = await adminAgent.post(`/api/v1/evidence/${evidenceId}/approve`);
 
@@ -1136,12 +1169,7 @@ describe('Evidence HTTP Routes', () => {
 
     it('should prevent authors from approving their own evidence', async () => {
       const agent = await loginAs('admin');
-
-      const createRes = await agent.post('/api/v1/evidence').send({
-        name: 'Author Self Approve',
-        state: 'in_review',
-      });
-      const evidenceId = createRes.body.id;
+      const evidenceId = await createInReview(agent, await loginAs('assessor'), 'Author Self Approve');
 
       const res = await agent.post(`/api/v1/evidence/${evidenceId}/approve`);
 
@@ -1175,12 +1203,7 @@ describe('Evidence HTTP Routes', () => {
   describe('POST /api/v1/evidence/:id/reject', () => {
     it('should reject evidence in review status with note', async () => {
       const agent = await loginAs('admin');
-
-      const createRes = await agent.post('/api/v1/evidence').send({
-        name: 'Reject Test',
-        state: 'in_review',
-      });
-      const evidenceId = createRes.body.id;
+      const evidenceId = await createInReview(await loginAs('assessor'), agent, 'Reject Test');
 
       const res = await agent
         .post(`/api/v1/evidence/${evidenceId}/reject`)
@@ -1192,12 +1215,7 @@ describe('Evidence HTTP Routes', () => {
 
     it('should add rejection note to evidence', async () => {
       const agent = await loginAs('admin');
-
-      const createRes = await agent.post('/api/v1/evidence').send({
-        name: 'Reject Note Test',
-        state: 'in_review',
-      });
-      const evidenceId = createRes.body.id;
+      const evidenceId = await createInReview(await loginAs('assessor'), agent, 'Reject Note Test');
 
       await agent
         .post(`/api/v1/evidence/${evidenceId}/reject`)
@@ -1253,12 +1271,7 @@ describe('Evidence HTTP Routes', () => {
 
     it('should prevent authors from rejecting their own evidence', async () => {
       const agent = await loginAs('admin');
-
-      const createRes = await agent.post('/api/v1/evidence').send({
-        name: 'Author Self Reject',
-        state: 'in_review',
-      });
-      const evidenceId = createRes.body.id;
+      const evidenceId = await createInReview(agent, await loginAs('assessor'), 'Author Self Reject');
 
       const res = await agent
         .post(`/api/v1/evidence/${evidenceId}/reject`)
@@ -1586,10 +1599,15 @@ describe('Evidence HTTP Routes', () => {
         .send({ content: 'Initial assessment' });
       expect(noteRes.status).toBe(201);
 
-      // Move evidence into review
-      const updateRes = await assessorAgent
+      // Move evidence into review (the only way in is submit-for-review)
+      const tagRes = await assessorAgent
         .put(`/api/v1/evidence/${evidenceId}`)
-        .send({ state: 'in_review', tags: ['reviewed'] });
+        .send({ tags: ['reviewed'] });
+      expect(tagRes.status).toBe(200);
+      const me = await adminAgent.get('/api/v1/auth/me');
+      const updateRes = await assessorAgent
+        .post(`/api/v1/evidence/${evidenceId}/submit-for-review`)
+        .send({ reviewerId: me.body.user?.id ?? me.body.id });
       expect(updateRes.status).toBe(200);
 
       // Approve as the reviewer (non-author)

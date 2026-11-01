@@ -13,6 +13,7 @@ import type { EventEnvelope } from './types.js';
 import type { NotificationRule } from '../db/types.js';
 import { ChannelRegistry } from './channel-registry.js';
 import { buildTitle, buildMessage, buildLink, insertNotification } from './notification-utils.js';
+import { readableAssessmentIds, allowsAssessment, visibleEvidenceIds } from '../utils/access.js';
 
 /**
  * Result of evaluating a rule against an event.
@@ -24,12 +25,38 @@ export interface RuleMatch {
   destination?: Record<string, unknown>;
 }
 
+
+const NAMED_USER_FIELDS = ['authorId', 'reviewerId', 'requiredUserId', 'userId', 'assigneeId'];
+
+/** The assessment an event is about, directly or via its attestation or affirmation. */
+async function subjectAssessmentId(db: Kysely<Database>, data: Record<string, unknown>): Promise<string | null> {
+  if (typeof data.assessmentId === 'string') return data.assessmentId;
+  for (const [field, table] of [['attestationId', 'attestation'], ['affirmationId', 'affirmation']] as const) {
+    const id = data[field];
+    if (typeof id !== 'string') continue;
+    const row = await db.selectFrom(table).select('assessment_id').where('id', '=', id).executeTakeFirst();
+    if (row?.assessment_id) return row.assessment_id as string;
+  }
+  return null;
+}
+
 export class RulesEngine {
   private getDb: () => Kysely<Database>;
   private channelRegistry: ChannelRegistry | null = null;
 
-  constructor(getDb: () => Kysely<Database>) {
+  private canSee: (db: Kysely<Database>, userId: string, envelope: EventEnvelope) => Promise<boolean>;
+
+  /**
+   * @param canSee visibility check for personal rules; defaults to
+   *   ownerCanSeeSubject. Injectable so unit tests of rule matching can run
+   *   without a database.
+   */
+  constructor(
+    getDb: () => Kysely<Database>,
+    canSee?: (db: Kysely<Database>, userId: string, envelope: EventEnvelope) => Promise<boolean>,
+  ) {
     this.getDb = getDb;
+    this.canSee = canSee ?? ((db, userId, envelope) => this.ownerCanSeeSubject(db, userId, envelope));
   }
 
   /**
@@ -37,6 +64,31 @@ export class RulesEngine {
    */
   setChannelRegistry(registry: ChannelRegistry): void {
     this.channelRegistry = registry;
+  }
+
+  /**
+   * Whether the owner of a personal rule may learn about this event:
+   * they are named in it (author, reviewer, required signer), or they can
+   * read its subject (assessment, evidence, attestation, affirmation).
+   * Events with no recognizable subject are not delivered to personal rules.
+   */
+  private async ownerCanSeeSubject(db: Kysely<Database>, userId: string, envelope: EventEnvelope): Promise<boolean> {
+    const data = envelope.data ?? {};
+    if (NAMED_USER_FIELDS.some((k) => data[k] === userId)) return true;
+
+    const user = await db.selectFrom('app_user').select(['id', 'role', 'is_active']).where('id', '=', userId).executeTakeFirst();
+    if (!user || !user.is_active) return false;
+    const owner = { id: user.id, role: user.role as string };
+
+    const assessmentId = await subjectAssessmentId(db, data);
+    if (assessmentId) {
+      return allowsAssessment(await readableAssessmentIds(db, owner), assessmentId);
+    }
+    if (typeof data.evidenceId === 'string') {
+      const visible = await visibleEvidenceIds(db, owner, [data.evidenceId]);
+      return visible === null || visible.has(data.evidenceId);
+    }
+    return false;
   }
 
   /**
@@ -70,8 +122,7 @@ export class RulesEngine {
         }
       } else if (rule.scope === 'user' && rule.user_id) {
         // User rules only apply to that user
-        // Exclude the actor from their own notifications
-        if (envelope.actor.userId === rule.user_id) {
+        if (!(await this.personalRuleApplies(db, rule.user_id, eventTypes, envelope))) {
           continue;
         }
 
@@ -84,6 +135,19 @@ export class RulesEngine {
     }
 
     return matches;
+  }
+
+  /**
+   * A personal rule never fires for its owner's own actions, must name its
+   * events (no '*' or empty list), and may only fire for events whose
+   * subject its owner can see; '*' used to deliver every event in the
+   * organization (security review Z10). Rules saved before the fix are
+   * filtered here too.
+   */
+  private async personalRuleApplies(db: Kysely<Database>, userId: string, eventTypes: string[], envelope: EventEnvelope): Promise<boolean> {
+    if (envelope.actor.userId === userId) return false;
+    if (eventTypes.length === 0 || (eventTypes.includes('*') && !eventTypes.includes(envelope.type))) return false;
+    return this.canSee(db, userId, envelope);
   }
 
   /**
@@ -252,15 +316,12 @@ export class RulesEngine {
         if (channelName === 'in_app') {
           // Special handling for in-app: create notifications directly
           await this.deliverInApp(envelope, channelMatches);
-        } else {
-          // Other channels are dispatched via the channel registry
-          const channel = this.channelRegistry.getChannel(channelName);
-          if (channel?.handles(envelope)) {
-            // For now, the channel's process() handles it
-            // In future, we could call a specialized method with matches
-            await channel.process(envelope);
-          }
         }
+        // Every other channel (email, webhook, chat) is subscribed to the
+        // event bus by ChannelRegistry.initializeAll and processes each
+        // event itself. Calling process() here as well delivered twice,
+        // and let any user's personal rule trigger the organization's
+        // admin-configured integrations (security review X9).
       }
     } catch (error) {
       logger.error('RulesEngine: Error processing event', {

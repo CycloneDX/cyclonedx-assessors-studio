@@ -50,7 +50,8 @@ describe('RulesEngine', () => {
       }),
     } as unknown as ChannelRegistry;
 
-    engine = new RulesEngine(() => mockDb);
+    // Matching mechanics only; subject visibility is covered by the HTTP tests.
+    engine = new RulesEngine(() => mockDb, async () => true);
     engine.setChannelRegistry(mockChannelRegistry);
   });
 
@@ -184,7 +185,54 @@ describe('RulesEngine', () => {
       expect(matches[0].rule.event_types).toContain('assessment.created');
     });
 
-    it('matches wildcard event types', async () => {
+    it('matches wildcard event types on system rules', async () => {
+      const rule: any = {
+        id: 'rule-1',
+        user_id: null,
+        scope: 'system',
+        channel: 'in_app',
+        enabled: true,
+        event_types: ['*'],
+        filters: {},
+        destination: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      let callCount = 0;
+      (mockDb.selectFrom as any).mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            where: vi.fn().mockReturnThis(),
+            selectAll: vi.fn().mockReturnThis(),
+            execute: vi.fn().mockResolvedValue([rule]),
+          };
+        }
+        return {
+          where: vi.fn().mockReturnThis(),
+          selectAll: vi.fn().mockReturnThis(),
+          execute: vi.fn().mockResolvedValue([]),
+          executeTakeFirst: vi.fn().mockResolvedValue(null),
+        };
+      });
+
+      const envelope: EventEnvelope = {
+        id: 'evt_test',
+        type: 'custom.event',
+        category: 'custom',
+        timestamp: new Date().toISOString(),
+        version: '1',
+        actor: { userId: 'user-2', displayName: 'Jane Doe' },
+        data: {},
+      };
+
+      const matches = await engine.evaluate(envelope);
+      expect(matches.length).toBeGreaterThan(0);
+    });
+
+    // Security review Z10: a personal rule cannot subscribe to everything.
+    it('does not let a personal rule match through a wildcard', async () => {
       const rule: any = {
         id: 'rule-1',
         user_id: 'user-1',
@@ -227,7 +275,7 @@ describe('RulesEngine', () => {
       };
 
       const matches = await engine.evaluate(envelope);
-      expect(matches.length).toBeGreaterThan(0);
+      expect(matches).toHaveLength(0);
     });
 
     it('excludes actor from user-scoped rules', async () => {
@@ -332,7 +380,8 @@ describe('RulesEngine', () => {
         scope: 'user',
         channel: 'in_app',
         enabled: true,
-        event_types: [],
+        // Personal rules must name their events (security review Z10).
+        event_types: ['test.event'],
         filters: {},
         destination: null,
         created_at: new Date(),
@@ -375,7 +424,7 @@ describe('RulesEngine', () => {
 
   describe('processEvent()', () => {
     it('skips processing when ChannelRegistry is not set', async () => {
-      const engine2 = new RulesEngine(() => mockDb);
+      const engine2 = new RulesEngine(() => mockDb, async () => true);
       // Don't set channel registry
 
       const envelope: EventEnvelope = {
@@ -458,7 +507,7 @@ describe('RulesEngine', () => {
       expect(true).toBe(true);
     });
 
-    it('dispatches to channels for non-in_app rules', async () => {
+    it('leaves non-in_app channels to their own event-bus subscription (X9)', async () => {
       const rule: any = {
         id: 'rule-1',
         user_id: 'user-2',
@@ -518,8 +567,10 @@ describe('RulesEngine', () => {
 
       await engine.processEvent(envelope);
 
-      // Channel.process should have been called
-      expect(mockChannel.process).toHaveBeenCalledWith(envelope);
+      // Email, webhook and chat channels subscribe to the event bus
+      // themselves; the rules engine dispatching again delivered twice and
+      // let personal rules trigger admin integrations (security review X9).
+      expect(mockChannel.process).not.toHaveBeenCalled();
     });
 
     it('handles errors gracefully during processEvent', async () => {

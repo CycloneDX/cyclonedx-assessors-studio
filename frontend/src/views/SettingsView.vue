@@ -353,7 +353,7 @@ import { useUIStore } from '@/stores/ui'
 import { usePasswordPolicyStore } from '@/stores/passwordPolicy'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import axios from 'axios'
+import client from '@/api/client'
 import { AVAILABLE_LOCALES, loadLocaleMessages } from '@/i18n'
 import PageHeader from '@/components/shared/PageHeader.vue'
 import SearchSelect from '@/components/shared/SearchSelect.vue'
@@ -426,7 +426,7 @@ watch(() => preferences.value.language, (newLocale) => {
 const handleSaveProfile = async () => {
   savingProfile.value = true
   try {
-    await axios.put('/api/v1/auth/profile', {
+    await client.put('/auth/profile', {
       displayName: profileForm.value.displayName
     })
     ElMessage.success('Profile updated successfully')
@@ -461,7 +461,7 @@ const handleChangePassword = async () => {
 
   savingPassword.value = true
   try {
-    await axios.put('/api/v1/auth/change-password', {
+    await client.put('/auth/change-password', {
       currentPassword: passwordForm.value.currentPassword,
       newPassword: passwordForm.value.newPassword
     })
@@ -487,7 +487,7 @@ const chatIdentities = ref({
 const handleSaveChatIdentities = async () => {
   savingChatIdentities.value = true
   try {
-    await axios.patch('/api/v1/auth/profile/chat-identities', {
+    await client.patch('/auth/profile/chat-identities', {
       slackUserId: chatIdentities.value.slackUserId || null,
       teamsUserId: chatIdentities.value.teamsUserId || null,
       mattermostUsername: chatIdentities.value.mattermostUsername || null,
@@ -569,7 +569,7 @@ const showSlackWarning = computed(() => {
 const fetchUserRules = async () => {
   userRulesLoading.value = true
   try {
-    const { data } = await axios.get('/api/v1/notification-rules')
+    const { data } = await client.get('/notification-rules')
     userRules.value = data.rules || data
   } catch (err: unknown) {
     ElMessage.error('Failed to load notification rules')
@@ -581,7 +581,7 @@ const fetchUserRules = async () => {
 const fetchProjectOptionsUserRule = async () => {
   projectsLoadingUserRule.value = true
   try {
-    const { data } = await axios.get('/api/v1/projects', {
+    const { data } = await client.get('/projects', {
       params: { limit: 100 }
     })
     projectOptionsUserRule.value = (data.data || []).map((project: Record<string, unknown>) => ({
@@ -598,7 +598,7 @@ const fetchProjectOptionsUserRule = async () => {
 const fetchStandardOptionsUserRule = async () => {
   standardsLoadingUserRule.value = true
   try {
-    const { data } = await axios.get('/api/v1/standards', {
+    const { data } = await client.get('/standards', {
       params: { limit: 100 }
     })
     standardOptionsUserRule.value = (data.data || []).map((standard: Record<string, unknown>) => ({
@@ -615,7 +615,7 @@ const fetchStandardOptionsUserRule = async () => {
 const fetchAssessmentOptionsUserRule = async () => {
   assessmentsLoadingUserRule.value = true
   try {
-    const { data } = await axios.get('/api/v1/assessments', {
+    const { data } = await client.get('/assessments', {
       params: { limit: 100 }
     })
     assessmentOptionsUserRule.value = (data.data || []).map((assessment: Record<string, unknown>) => ({
@@ -687,10 +687,10 @@ const handleSaveUserRule = async () => {
     }
 
     if (editingUserRuleId.value) {
-      await axios.put(`/api/v1/notification-rules/${editingUserRuleId.value}`, payload)
+      await client.put(`/notification-rules/${editingUserRuleId.value}`, payload)
       ElMessage.success('Rule updated successfully')
     } else {
-      await axios.post('/api/v1/notification-rules', payload)
+      await client.post('/notification-rules', payload)
       ElMessage.success('Rule created successfully')
     }
 
@@ -706,7 +706,7 @@ const handleSaveUserRule = async () => {
 
 const handleToggleUserRuleEnabled = async (rule: UserNotificationRule) => {
   try {
-    await axios.patch(`/api/v1/notification-rules/${rule.id}`, {
+    await client.patch(`/notification-rules/${rule.id}`, {
       enabled: rule.enabled
     })
   } catch (err: unknown) {
@@ -723,7 +723,7 @@ const handleDeleteUserRule = async (rule: UserNotificationRule) => {
       t('common.delete'),
       { confirmButtonText: t('common.delete'), cancelButtonText: t('common.cancel'), type: 'warning' }
     )
-    await axios.delete(`/api/v1/notification-rules/${rule.id}`)
+    await client.delete(`/notification-rules/${rule.id}`)
     ElMessage.success('Rule deleted successfully')
     await fetchUserRules()
   } catch (err: unknown) {
@@ -752,7 +752,7 @@ const handleLogoutAll = async () => {
       'Logout All Sessions',
       { confirmButtonText: 'Logout All', cancelButtonText: 'Cancel', type: 'warning' }
     )
-    await axios.post('/api/v1/auth/logout-all')
+    await client.post('/auth/logout-all')
     ElMessage.success('All sessions logged out')
     authStore.logout()
     router.push('/login')

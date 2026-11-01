@@ -16,28 +16,58 @@
 # alongside the rest of the application state.
 #
 # Optional overrides:
-#   APP_IMAGE   - Image to run (default: cyclonedx/cyclonedx-assessors-studio:snapshot)
+#   APP_IMAGE   - Image to run (default: cyclonedx-assessors-studio:local, built here)
 #   APP_PORT    - Host port to publish (default: 3001)
 #   JWT_SECRET  - Override the auto-generated signing secret (>= 32 chars).
 #                 Set this when running multiple replicas or managing the
 #                 secret externally.
 #
-# To build from source instead of pulling the published image, run from
-# the repository root:
-#   docker build -f deploy/docker/Dockerfile -t cyclonedx/cyclonedx-assessors-studio:dev .
-#   APP_IMAGE=cyclonedx/cyclonedx-assessors-studio:dev docker compose up -d
+# `docker compose up -d` builds the image from this repository. To run a
+# published image instead, set APP_IMAGE (pinned by digest) and
+# APP_PULL_POLICY=always. For production, use docker-compose.production.yml,
+# which takes every credential from Compose secrets.
 ###############################################################################
 
 services:
   app:
-    image: ${APP_IMAGE:-cyclonedx/cyclonedx-assessors-studio:snapshot}
-    pull_policy: always
+    # Built from this repository by default. The old default pulled
+    # upstream's mutable cyclonedx/cyclonedx-assessors-studio:snapshot
+    # tag, i.e. someone else's code (security review W6). Set APP_IMAGE
+    # (pinned by digest) and APP_PULL_POLICY=always to run a published image.
+    image: ${APP_IMAGE:-cyclonedx-assessors-studio:local}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    pull_policy: ${APP_PULL_POLICY:-build}
     ports:
-      - "${APP_PORT:-3001}:3001"
+      # A3: bind to loopback; front it with the reverse proxy. The bare
+      # "HOST:CONTAINER" form publishes on 0.0.0.0 (every interface).
+      - "127.0.0.1:${APP_PORT:-3001}:3001"
+    # Closes the observed NoNewPrivs:0 gap. apparmor= is deliberately NOT set
+    # (explicit docker-default fails on non-AppArmor hosts; omission yields the
+    # right default where it exists). Seccomp stays on Docker's default profile.
+    security_opt:
+      - no-new-privileges:true
+    # Runs non-root (appuser) with zero effective caps already; drop the
+    # bounding set so escalation can't reach the default 14. Needs none.
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    pids_limit: 512
+    mem_limit: 2048m
+    memswap_limit: 2048m   # == mem_limit -> no swap. ~290MB steady, but the
+                           # PGlite(WASM)+argon2 startup spike OOM-kills under 1g
+                           # (boot-tested). Never 0/unset -> that means 2x RAM swap.
     environment:
       # Core
       NODE_ENV: production
       PORT: 3001
+      # No proxy in front of this dev stack, so 0: trusting X-Forwarded-For
+      # without a proxy would let any client pick its own IP. Set to the
+      # proxy count if you put one in front (see the production file).
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
       DATABASE_PROVIDER: pglite
       PGLITE_DATA_DIR: /app/data/pglite
       JWT_SECRET: ${JWT_SECRET:-}

@@ -110,18 +110,27 @@ function buildRelationshipMaps(requirements: RawRequirement[]): {
 }
 
 /**
- * Recursively visit a node and its children in DFS order.
+ * Visit a node and its descendants in DFS pre-order (parents first).
+ * Iterative with a visited set: a requirement whose parent is itself, or a
+ * parent cycle, used to recurse until the stack overflowed, failing the
+ * import and leaving the standard row behind (security review I12).
  */
 function visitRequirementNode(
   node: RawRequirement,
   childrenOf: Map<string, RawRequirement[]>,
   sorted: RawRequirement[]
 ): void {
-  sorted.push(node);
-  const ref = getRequirementRef(node);
-  const children = childrenOf.get(ref) ?? [];
-  for (const child of children) {
-    visitRequirementNode(child, childrenOf, sorted);
+  const seen = new Set<RawRequirement>(sorted);
+  const stack: RawRequirement[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop() as RawRequirement;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    sorted.push(current);
+    const children = childrenOf.get(getRequirementRef(current)) ?? [];
+    for (let i = children.length - 1; i >= 0; i--) {
+      stack.push(children[i] as RawRequirement);
+    }
   }
 }
 
@@ -248,7 +257,14 @@ async function insertRequirement(
         imported_bom_ref: normalized.bomRef !== '' ? normalized.bomRef : null,
         // biome-ignore lint/suspicious/noExplicitAny: Kysely Insertable lags the migration
       } as any)
-      .execute();
+      // Duplicates are skipped in SQL, not by catching the error: inside the
+      // import transaction a failed statement aborts the transaction.
+      .onConflict((oc) => oc.doNothing())
+      .returning('id')
+      .executeTakeFirst()
+      .then((row) => {
+        if (!row) throw Object.assign(new Error('duplicate requirement'), { code: '23505' });
+      });
 
     const mapKey = normalized.bomRef !== '' ? normalized.bomRef : normalized.identifier;
     requirementMap.set(mapKey, requirementId);
@@ -313,6 +329,7 @@ async function insertLevelRequirementLink(
     await db
       .insertInto('level_requirement')
       .values({ level_id: levelId, requirement_id: requirementId })
+      .onConflict((oc) => oc.doNothing())
       .execute();
   } catch (junctionError: unknown) {
     if (isDuplicateError(junctionError)) {
@@ -363,7 +380,12 @@ async function insertLevel(
         description: normalized.description,
         standard_id: standardId,
       })
-      .execute();
+      .onConflict((oc) => oc.doNothing())
+      .returning('id')
+      .executeTakeFirst()
+      .then((row) => {
+        if (!row) throw Object.assign(new Error('duplicate level'), { code: '23505' });
+      });
 
     // Link requirements to this level
     await linkLevelRequirements(db, levelId, normalized.requirements, requirementMap);
@@ -443,8 +465,10 @@ export async function importStandard(
 
   const standardId = uuidv4();
 
-  // Create the standard record
-  await db
+  // Standard, requirements and levels in one transaction, so a failure
+  // part-way cannot leave an orphan standard row (security review I12).
+  const { requirementCount, levelCount } = await db.transaction().execute(async (trx) => {
+  await trx
     .insertInto('standard')
     .values({
       id: standardId,
@@ -461,8 +485,10 @@ export async function importStandard(
     .execute();
 
   // Import requirements and levels
-  const { count: requirementCount, map: requirementMap } = await importRequirements(db, standard, standardId);
-  const levelCount = await importLevels(db, standard, standardId, requirementMap);
+  const { count: reqCount, map: requirementMap } = await importRequirements(trx, standard, standardId);
+  const lvlCount = await importLevels(trx, standard, standardId, requirementMap);
+  return { requirementCount: reqCount, levelCount: lvlCount };
+  });
 
   logger.info('Standard imported', {
     standardId,

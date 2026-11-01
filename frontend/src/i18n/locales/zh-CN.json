@@ -116,7 +116,9 @@
     "password": "密码",
     "signIn": "登录",
     "enterCredentials": "请输入用户名和密码",
-    "loginFailed": "登录失败。请重试。"
+    "loginFailed": "登录失败。请重试。",
+    "forgotPassword": "忘记密码?",
+    "resetDone": "密码已重置。请使用新密码登录。"
   },
   "setup": {
     "welcome": "欢迎使用 Assessors Studio",
@@ -587,5 +589,23 @@
   },
   "dropZones": {
     "makeRootLevel": "在此处放置以创建根级别"
+  },
+  "passwordReset": {
+    "forgotTitle": "重置密码",
+    "forgotIntro": "请输入您账户的电子邮件地址。如果该地址对应某个账户,我们会发送一个用于设置新密码的链接。",
+    "email": "电子邮件地址",
+    "enterEmail": "请输入您的电子邮件地址",
+    "sendLink": "发送重置链接",
+    "requestSent": "如果该地址存在账户,重置链接已发送。链接将在 30 分钟后失效。",
+    "requestFailed": "请求发送失败,请重试。",
+    "resetTitle": "设置新密码",
+    "newPassword": "新密码",
+    "confirmPassword": "确认新密码",
+    "minLength": "至少 {n} 个字符",
+    "mismatch": "两次输入的密码不一致",
+    "setPassword": "保存新密码",
+    "missingToken": "此重置链接不完整。请重新打开邮件中的链接,或申请新的链接。",
+    "resetFailed": "无法重置密码。链接可能已过期,请申请新的链接。",
+    "backToLogin": "返回登录"
   }
 }

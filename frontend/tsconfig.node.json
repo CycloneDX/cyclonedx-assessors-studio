@@ -5,7 +5,11 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "target": "ESNext",
-    "types": ["node"]
+    "types": ["node"],
+    // Type-check only: emitting would write vite.config.js beside the
+    // source, and Vite loads that before vite.config.ts.
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo"
   },
   "include": ["vite.config.ts"]
 }

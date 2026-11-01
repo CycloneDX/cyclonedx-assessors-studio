@@ -16,7 +16,7 @@ import { getConfig } from '../../config/index.js';
 import type { NotificationChannel } from '../channel.js';
 import type { EventEnvelope } from '../types.js';
 import { CHANNEL_CHAT_DISABLED, CHANNEL_TEST } from '../catalog.js';
-import { resolveAndAssertPublic } from '../../utils/url-safety.js';
+import { safeFetch, UnsafeUrlError } from '../../utils/safe-fetch.js';
 import { encryptionService, isEncryptedEnvelope } from '../../utils/encryption.js';
 
 /**
@@ -202,49 +202,35 @@ export abstract class BaseChatChannel implements NotificationChannel {
     // envelope; the actual network call needs the plaintext.
     const webhookUrlPlain = readWebhookUrl(integration.webhook_url);
 
-    // Delivery-time SSRF guard. See the same check in dispatchDelivery
-    // below for the rationale. sendTestMessage is a hand-triggered admin
-    // action but it still reaches out to the configured webhook URL, so
-    // the same DNS-resolution screening applies.
-    const safetyCheck = await resolveAndAssertPublic(webhookUrlPlain);
-    if (!safetyCheck.safe) {
-      logger.warn(`Chat test message blocked by delivery-time URL check (${this.platform})`, {
-        integrationId,
-        reason: safetyCheck.reason,
-      });
-      return {
-        success: false,
-        message: `Test delivery blocked: ${safetyCheck.reason ?? 'unsafe URL'}`,
-      };
-    }
-
+    // Delivery-time SSRF guard (security review X1): safeFetch refuses
+    // private/reserved targets, pins the socket to the validated address
+    // and never follows redirects. This hand-triggered admin test reaches
+    // out to the same URL, so it gets the same treatment.
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-      const response = await fetch(webhookUrlPlain, {
+      const response = await safeFetch(webhookUrlPlain, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'CycloneDX-Assessors-Studio/1.0',
         },
         body: JSON.stringify(messageBody),
-        signal: controller.signal,
+        timeoutMs: timeout,
+        maxResponseBytes: 1024,
       });
-
-      clearTimeout(timeoutId);
 
       if (response.ok) {
         return { success: true, message: `Test message sent successfully (HTTP ${response.status})` };
-      } else {
-        return { success: false, message: `Webhook returned HTTP ${response.status}` };
       }
+      return { success: false, message: `Webhook returned HTTP ${response.status}` };
     } catch (error: unknown) {
-      const errorObj = error as Record<string, unknown>;
-      const msg = errorObj?.name === 'AbortError'
-        ? `Request timed out after ${timeout}ms`
-        : ((errorObj?.message as string) || String(error));
-      return { success: false, message: msg };
+      if (error instanceof UnsafeUrlError) {
+        logger.warn(`Chat test message blocked by delivery-time URL check (${this.platform})`, {
+          integrationId,
+          reason: error.message,
+        });
+        return { success: false, message: `Test delivery blocked: ${error.message}` };
+      }
+      return { success: false, message: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -303,43 +289,18 @@ export abstract class BaseChatChannel implements NotificationChannel {
     const messageBody = this.formatMessage(envelope, appUrl);
     const webhookUrlPlain = readWebhookUrl(integration.webhook_url);
 
-    // Delivery-time SSRF guard. The URL passed config-time validation
-    // when the integration was saved, but DNS can drift and the URL
-    // could be rewritten in the database out of band. Re-resolve right
-    // before the fetch and refuse targets that resolve into private or
-    // reserved ranges.
-    const safetyCheck = await resolveAndAssertPublic(webhookUrlPlain);
-    if (!safetyCheck.safe) {
-      logger.warn(`Chat delivery blocked by delivery-time URL check (${this.platform})`, {
-        integrationId: integration.id,
-        deliveryId,
-        reason: safetyCheck.reason,
-      });
-      await this.handleFailure(
-        deliveryId,
-        integration,
-        attempt,
-        null,
-        `Delivery blocked: ${safetyCheck.reason ?? 'unsafe URL'}`,
-      );
-      return;
-    }
-
+    // Delivery-time SSRF guard (security review X1); see sendTestMessage.
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-      const response = await fetch(webhookUrlPlain, {
+      const response = await safeFetch(webhookUrlPlain, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'CycloneDX-Assessors-Studio/1.0',
         },
         body: JSON.stringify(messageBody),
-        signal: controller.signal,
+        timeoutMs: timeout,
+        maxResponseBytes: 1024,
       });
-
-      clearTimeout(timeoutId);
 
       if (response.ok) {
         await db
@@ -364,11 +325,16 @@ export abstract class BaseChatChannel implements NotificationChannel {
         await this.handleFailure(deliveryId, integration, attempt, response.status, `HTTP ${response.status}`);
       }
     } catch (error: unknown) {
-      const err = error as Record<string, unknown> | null;
-      const errorMessage = err?.name === 'AbortError'
-        ? `Request timed out after ${timeout}ms`
-        : (typeof err?.message === 'string' ? err.message : String(error));
-
+      if (error instanceof UnsafeUrlError) {
+        logger.warn(`Chat delivery blocked by delivery-time URL check (${this.platform})`, {
+          integrationId: integration.id,
+          deliveryId,
+          reason: error.message,
+        });
+        await this.handleFailure(deliveryId, integration, attempt, null, `Delivery blocked: ${error.message}`);
+        return;
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
       await this.handleFailure(deliveryId, integration, attempt, null, errorMessage);
     }
   }

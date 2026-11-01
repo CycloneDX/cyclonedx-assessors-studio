@@ -49,9 +49,9 @@ async function loginAs(username: string): Promise<APIRequestContext> {
  *
  * Permissions (backend/src/db/seed.ts):
  *   admin    : all
- *   assessor : view, create, edit, review
- *   assessee : view, create, submit
- *   standards_manager / standards_approver : view only
+ *   assessor : view, view_all, create, edit, review
+ *   assessee : view (own-authored / to-review rows), create, submit
+ *   standards_manager / standards_approver : none (no evidence.view)
  *
  * Author guards:
  *   - Authors cannot approve their own evidence (line 299).
@@ -383,17 +383,16 @@ test.describe('Evidence lifecycle @regression', () => {
       expect(r.status()).toBe(403);
     });
 
-    test('all roles can read the evidence list', async ({ apiAs }) => {
-      for (const role of [
-        'admin',
-        'assessor',
-        'assessee',
-        'standards_manager',
-        'standards_approver',
-      ] as const) {
-        const api = await apiAs(role);
-        const r = await api.get('/api/v1/evidence');
-        expect(r.ok(), `${role} could not read /evidence`).toBeTruthy();
+    // Least privilege (01fb734, confirmed 2026-10-16): the standards roles
+    // do not read evidence; assessees get a list scoped to their own.
+    test('evidence list access follows least privilege', async ({ apiAs }) => {
+      for (const role of ['admin', 'assessor', 'assessee'] as const) {
+        const r = await (await apiAs(role)).get('/api/v1/evidence');
+        expect(r.ok(), `${role} should read /evidence`).toBeTruthy();
+      }
+      for (const role of ['standards_manager', 'standards_approver'] as const) {
+        const r = await (await apiAs(role)).get('/api/v1/evidence');
+        expect(r.status(), `${role} has no evidence.view`).toBe(403);
       }
     });
   });

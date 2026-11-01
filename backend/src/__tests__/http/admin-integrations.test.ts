@@ -42,50 +42,22 @@ describe('Admin Integrations HTTP Routes', () => {
       expect(res.status).toBe(403);
     });
 
+    it('should never expose SMTP or S3 secrets', async () => {
+      const agent = await loginAs('admin');
+      const res = await agent.get('/api/v1/admin/integrations/status');
+
+      expect(res.status).toBe(200);
+      expect(typeof res.body.smtp.passConfigured).toBe('boolean');
+      expect(res.body.smtp).not.toHaveProperty('pass');
+      expect(res.body.smtp).not.toHaveProperty('password');
+      expect(JSON.stringify(res.body)).not.toMatch(/secret/i);
+    });
+
     it('should reject unauthenticated requests', async () => {
       const { default: supertest } = await import('supertest');
       const { getBaseUrl } = await import('../helpers/http.js');
       const res = await supertest(getBaseUrl()).get('/api/v1/admin/integrations/status');
       expect(res.status).toBe(401);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /api/v1/admin/integrations/smtp
-  // -----------------------------------------------------------------------
-
-  describe('GET /api/v1/admin/integrations/smtp', () => {
-    it('should return SMTP config for admin', async () => {
-      const agent = await loginAs('admin');
-      const res = await agent.get('/api/v1/admin/integrations/smtp');
-
-      expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty('enabled');
-      expect(res.body).toHaveProperty('port');
-      expect(res.body).toHaveProperty('secure');
-      expect(res.body).toHaveProperty('userConfigured');
-      expect(res.body).toHaveProperty('passConfigured');
-      expect(res.body).toHaveProperty('tlsRejectUnauthorized');
-
-      // In test environment SMTP is disabled by default
-      expect(res.body.enabled).toBe(false);
-    });
-
-    it('should never expose the actual password', async () => {
-      const agent = await loginAs('admin');
-      const res = await agent.get('/api/v1/admin/integrations/smtp');
-
-      expect(res.status).toBe(200);
-      // The response should contain passConfigured boolean, not the actual pass
-      expect(typeof res.body.passConfigured).toBe('boolean');
-      expect(res.body).not.toHaveProperty('pass');
-      expect(res.body).not.toHaveProperty('password');
-    });
-
-    it('should reject non-admin users', async () => {
-      const agent = await loginAs('assessee');
-      const res = await agent.get('/api/v1/admin/integrations/smtp');
-      expect(res.status).toBe(403);
     });
   });
 
